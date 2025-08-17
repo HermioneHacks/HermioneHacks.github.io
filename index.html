@@ -136,6 +136,9 @@
       const [loginError, setLoginError] = useState("");
       const [conflicts, setConflicts] = useState([]);
       const [pauseRequests, setPauseRequests] = useState([]);
+      const [showCollaborationModal, setShowCollaborationModal] = useState(false);
+      const [pendingChoreClaim, setPendingChoreClaim] = useState(null);
+      const [selectedCollaborators, setSelectedCollaborators] = useState([]);
 
       // Get current date and time in CST
       function getCurrentDateTime() {
@@ -313,12 +316,12 @@
       function setPin(name, pinRaw) {
         const currentUser = prompt("Enter your name to set PIN:");
         if (currentUser === name) {
-          const pin = (pinRaw || "").trim();
-          if (pin && !/^[0-9]{4,8}$/.test(pin)) {
-            alert("PIN must be 4–8 digits.");
-            return;
-          }
-          setState((s) => ({ ...s, pins: { ...s.pins, [name]: pin } }));
+        const pin = (pinRaw || "").trim();
+        if (pin && !/^[0-9]{4,8}$/.test(pin)) {
+          alert("PIN must be 4–8 digits.");
+          return;
+        }
+        setState((s) => ({ ...s, pins: { ...s.pins, [name]: pin } }));
         } else if (currentUser !== null) {
           const password = prompt("Enter admin password to set PINs:");
           if (password !== "Himani2024") {
@@ -344,8 +347,8 @@
       }
 
       function checkForConflicts(kindOrChore, action, person) {
-        // Check if someone else already claimed this task recently (within last 2 hours for dishwasher, 30 minutes for optional chores)
-        const timeWindow = kindOrChore === '3pm' || kindOrChore === 'night' ? 2 * 60 * 60 * 1000 : 30 * 60 * 1000;
+        // Check if someone else already claimed this task recently (within last 2 hours for dishwasher, 1 hour for optional chores)
+        const timeWindow = kindOrChore === '3pm' || kindOrChore === 'night' ? 2 * 60 * 60 * 1000 : 60 * 60 * 1000;
         const timeAgo = new Date(Date.now() - timeWindow);
         
         const recentHistory = history.filter(h => {
@@ -489,7 +492,10 @@
           return;
         }
         
-        claimOptionalChore(choreName, completedBy);
+        // Set up the collaboration modal
+        setPendingChoreClaim({ choreName, completedBy });
+        setSelectedCollaborators([]);
+        setShowCollaborationModal(true);
       }
 
       function handleCompleteChore(choreName) {
@@ -650,6 +656,7 @@
                 <li>Night load must be <b>run & unloaded before bed</b> so mornings start empty.</li>
                 <li>Don't run during Brunch Buffer (11:00 AM–2:00 PM). Aim for a 3:00 PM load, and a 9:00 PM–11:00 PM load.</li>
                 <li><b>Optional Chores:</b> Extra tasks you can claim for points. No rotation - first come, first served!</li>
+                <li><b>Collaboration:</b> When claiming optional chores, you can choose to work alone or with others. Points are shared evenly among collaborators.</li>
                 <li><b>Own Mess:</b> If it's solely your own mess, you are very much responsible for cleaning it up yourself.</li>
                 <li><b>PINs:</b> Each roommate sets a numeric PIN (4–8 digits). You must enter your PIN to claim "I ran" or "I unloaded".</li>
               </ul>
@@ -675,7 +682,7 @@
                             {name}: {name === currentUser ? (paused[name] ? 'Request Unpause' : 'Request Pause') : (paused[name] ? 'Paused' : 'Unpaused')}
                           </button>
                         ))}
-                      </div>
+                          </div>
                     </div>
                   )}
                   <div className="space-y-3">
@@ -686,12 +693,12 @@
                           <div key={`3pm-${name}`} className={`px-3 py-1 rounded-full text-sm border shadow-sm ${idx===0?"bg-black text-white":"bg-white"}`}>
                             <div className="flex items-center gap-2">
                               <span>{idx+1}. {name}</span>
-                            </div>
-                          </div>
-                        ))}
+                        </div>
                       </div>
+                    ))}
+                  </div>
                       <div className="text-xs text-gray-500 mt-1">Full order: {activeQueue3pm.join(" → ")}</div>
-                    </div>
+                </div>
                     <div>
                       <div className="text-sm font-medium mb-2">Night Queue (Backward)</div>
                       <div className="flex flex-wrap gap-2">
@@ -699,14 +706,14 @@
                           <div key={`night-${name}`} className={`px-3 py-1 rounded-full text-sm border shadow-sm ${idx===0?"bg-black text-white":"bg-white"}`}>
                             <div className="flex items-center gap-2">
                               <span>{idx+1}. {name}</span>
-                            </div>
-                          </div>
-                        ))}
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-500 mt-1">Full order: {activeQueueNight.join(" → ")}</div>
-                    </div>
+                    ))}
                   </div>
+                      <div className="text-xs text-gray-500 mt-1">Full order: {activeQueueNight.join(" → ")}</div>
                 </div>
+              </div>
+                    </div>
                                   {!isGuest && (
                     <div className="space-y-2">
                       <div className="text-sm font-medium mb-1">Quick Actions for {currentUser}</div>
@@ -719,7 +726,7 @@
                           <button className="px-3 py-2 rounded-lg border bg-blue-50 hover:bg-blue-100" onClick={() => quickClaim('night', currentUser, 'run')}>I ran Night</button>
                           <button className="px-3 py-2 rounded-lg border bg-green-50 hover:bg-green-100" onClick={() => quickClaim('night', currentUser, 'unload')}>I unloaded Night</button>
                           <button className="px-3 py-2 rounded-lg border bg-purple-50 hover:bg-purple-100" onClick={() => quickClaim('night', currentUser, 'both')}>BOTH NIGHT</button>
-                        </div>
+                  </div>
                       </div>
                     </div>
                   )}
@@ -767,7 +774,7 @@
                 <div className="text-sm text-gray-600 mb-3">
                   <p><b>Note:</b> If it's solely your own mess, you are very much responsible for cleaning it up yourself.</p>
                   <p>These are extra tasks you can claim for points. No rotation - first come, first served!</p>
-                </div>
+                  </div>
                 {!isGuest && (
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                     {Object.keys(optionalChores).map((choreName) => (
@@ -800,13 +807,95 @@
               ) : null
             }>
               <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-3">
-                {roommates.map((n) => (
-                  <div key={n} className="rounded-xl border p-3 bg-white">
-                    <div className="text-sm font-medium mb-1">{n}</div>
-                    <div className="text-2xl font-bold">{(credits[n] ?? 0).toFixed(1)}</div>
-                    <div className="text-xs text-gray-500">Target: keep everyone within ±2 over a month.</div>
-                  </div>
-                ))}
+                {(() => {
+                  // Create array of roommates with points and sort by points
+                  const roommatesWithPoints = roommates
+                    .map((n) => ({ name: n, points: credits[n] ?? 0 }))
+                    .sort((a, b) => b.points - a.points);
+                  
+                  // Calculate actual places (handling ties)
+                  const calculatePlaces = (roommates) => {
+                    const places = [];
+                    let currentPlace = 1;
+                    let currentPoints = null;
+                    
+                    roommates.forEach((roommate, index) => {
+                      if (roommate.points !== currentPoints) {
+                        currentPlace = index + 1;
+                        currentPoints = roommate.points;
+                      }
+                      places.push(currentPlace);
+                    });
+                    
+                    return places;
+                  };
+                  
+                  const places = calculatePlaces(roommatesWithPoints);
+                  
+                  return roommatesWithPoints.map((roommate, index) => {
+                    const place = places[index];
+                    const getPlaceStyle = () => {
+                      switch (place) {
+                        case 1:
+                          return 'bg-yellow-50 border-yellow-200 shadow-sm';
+                        case 2:
+                          return 'bg-gray-50 border-gray-200 shadow-sm';
+                        case 3:
+                          return 'bg-orange-50 border-orange-200 shadow-sm';
+                        case 4:
+                          return 'bg-red-50 border-red-200 shadow-sm';
+                        default:
+                          return 'bg-white border-gray-200';
+                      }
+                    };
+                    const getPlaceIcon = () => {
+                      switch (place) {
+                        case 1:
+                          return '🥇';
+                        case 2:
+                          return '🥈';
+                        case 3:
+                          return '🥉';
+                        case 4:
+                          return '🏃';
+                        default:
+                          return '';
+                      }
+                    };
+                    const getPlaceText = () => {
+                      // Check if there are ties for this place
+                      const peopleInThisPlace = places.filter(p => p === place).length;
+                      const placeText = (() => {
+                        switch (place) {
+                          case 1:
+                            return '1st Place';
+                          case 2:
+                            return '2nd Place';
+                          case 3:
+                            return '3rd Place';
+                          case 4:
+                            return '4th Place';
+                          default:
+                            return `${place}th Place`;
+                        }
+                      })();
+                      
+                      return peopleInThisPlace > 1 ? `${placeText} (Tied)` : placeText;
+                    };
+                    
+                    return (
+                      <div key={roommate.name} className={`rounded-xl border p-3 ${getPlaceStyle()}`}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="text-sm font-medium">{roommate.name}</div>
+                          <div className="text-lg">{getPlaceIcon()}</div>
+                        </div>
+                        <div className="text-2xl font-bold">{roommate.points.toFixed(1)}</div>
+                        <div className="text-xs text-gray-500">{getPlaceText()}</div>
+                        <div className="text-xs text-gray-400 mt-1">Target: keep everyone within ±2 over a month.</div>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             </Section>
 
@@ -870,7 +959,10 @@
                             </>
                           ) : (
                             <>
-                              +{h.points}
+                              +{h.pointsPerPerson || h.points}
+                              {h.collaborators && h.collaborators.length > 0 && (
+                                <span className="text-xs text-green-600 ml-1">(shared with {h.collaborators.join(', ')})</span>
+                              )}
                               {h.isFavor && <span className="text-xs text-blue-600 ml-1">(favor)</span>}
                             </>
                           )}
@@ -887,6 +979,124 @@
               <div className="text-red-600 font-semibold">⚠️ ADMIN ACCESS: Only Himani can pause roommates, set PINs, or reset data. Others can only record their own chore completions.</div>
 
             </footer>
+
+            {showCollaborationModal && (
+              <div style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'rgba(0,0,0,0.5)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 9999
+              }}>
+                <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+                  <h3 className="text-lg font-semibold mb-4">
+                    {pendingChoreClaim?.completedBy === currentUser ? 'Collaboration Selection' : `Admin: ${pendingChoreClaim?.completedBy}'s Collaboration`}
+                  </h3>
+                  <div className="space-y-4">
+                    <div className="text-sm text-gray-600">
+                      <p><b>Chore:</b> {pendingChoreClaim?.choreName}</p>
+                      <p><b>Total Points:</b> {optionalChores[pendingChoreClaim?.choreName]?.points || 0}</p>
+                      <p className="mt-2">
+                        {pendingChoreClaim?.completedBy === currentUser 
+                          ? 'Select who you worked with on this chore:'
+                          : `Select who ${pendingChoreClaim?.completedBy} worked with on this chore:`
+                        }
+                      </p>
+          </div>
+                    
+                    <div className="space-y-2">
+                      <div className="flex gap-2 mb-2">
+                        <button
+                          className="px-3 py-1 text-xs bg-green-100 text-green-700 rounded border hover:bg-green-200"
+                          onClick={() => {
+                            const availableRoommates = roommates.filter(name => name !== pendingChoreClaim?.completedBy);
+                            setSelectedCollaborators(availableRoommates);
+                          }}
+                        >
+                          Select All
+                        </button>
+                        <button
+                          className="px-3 py-1 text-xs bg-red-100 text-red-700 rounded border hover:bg-red-200"
+                          onClick={() => setSelectedCollaborators([])}
+                        >
+                          Clear All
+                        </button>
+        </div>
+                      {roommates.filter(name => name !== pendingChoreClaim?.completedBy).map((name) => (
+                        <button
+                          key={name}
+                          className={`w-full p-3 rounded-lg border text-left transition-colors ${
+                            selectedCollaborators.includes(name)
+                              ? 'bg-blue-100 border-blue-300 text-blue-800'
+                              : 'bg-white border-gray-300 hover:bg-gray-50'
+                          }`}
+                          onClick={() => {
+                            setSelectedCollaborators(prev => 
+                              prev.includes(name) 
+                                ? prev.filter(n => n !== name)
+                                : [...prev, name]
+                            );
+                          }}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium">{name}</span>
+                            {selectedCollaborators.includes(name) && (
+                              <span className="text-blue-600">✓</span>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                    
+                    <div className="text-sm text-gray-600 p-3 bg-gray-50 rounded-lg">
+                      <p><b>Points Distribution:</b></p>
+                      <p>{pendingChoreClaim?.completedBy === currentUser ? 'You' : pendingChoreClaim?.completedBy}: {pendingChoreClaim?.completedBy}</p>
+                      {selectedCollaborators.length > 0 && (
+                        <p>Collaborators: {selectedCollaborators.join(', ')}</p>
+                      )}
+                      <p className="mt-1">
+                        <b>Points per person:</b> {
+                          selectedCollaborators.length > 0 
+                            ? ((optionalChores[pendingChoreClaim?.choreName]?.points || 0) / (selectedCollaborators.length + 1)).toFixed(2)
+                            : (optionalChores[pendingChoreClaim?.choreName]?.points || 0)
+                        }
+                      </p>
+                    </div>
+                    
+                    <div className="flex gap-3">
+                      <button
+                        className="flex-1 px-4 py-2 bg-gray-300 rounded-lg hover:bg-gray-400"
+                        onClick={() => {
+                          setShowCollaborationModal(false);
+                          setPendingChoreClaim(null);
+                          setSelectedCollaborators([]);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                        onClick={() => {
+                          if (pendingChoreClaim) {
+                            claimOptionalChore(pendingChoreClaim.choreName, pendingChoreClaim.completedBy, selectedCollaborators);
+                          }
+                          setShowCollaborationModal(false);
+                          setPendingChoreClaim(null);
+                          setSelectedCollaborators([]);
+                        }}
+                      >
+                        Confirm ({selectedCollaborators.length + 1} people)
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {showAdminPanel && (
               <div style={{
@@ -985,17 +1195,37 @@
                                     let points = 1.0;
                                     if (conflict.kindOrChore === '3pm' || conflict.kindOrChore === 'night') {
                                       points = 0.5; // Dishwasher tasks are 0.5 each
+                                      // Remove credit from existing claim
+                                      c[existingPerson] = Math.max(0, (c[existingPerson] ?? 0) - points);
+                                      // Add credit to new claim
+                                      c[newPerson] = (c[newPerson] ?? 0) + points;
                                     } else {
-                                      // Optional chore - get points from the chore definition
+                                      // Optional chore - need to handle collaborations
                                       const chore = optionalChores[conflict.kindOrChore];
-                                      points = chore ? chore.points : 1.0;
+                                      const totalPoints = chore ? chore.points : 1.0;
+                                      
+                                      // Find the existing entry to see if it was a collaboration
+                                      const existingEntry = history.find(h => 
+                                        h.choreName === conflict.kindOrChore && 
+                                        h.completedBy === existingPerson &&
+                                        new Date(h.when) > timeAgo
+                                      );
+                                      
+                                      if (existingEntry && existingEntry.collaborators && existingEntry.collaborators.length > 0) {
+                                        // Remove points from all collaborators
+                                        const pointsPerPerson = existingEntry.pointsPerPerson || totalPoints / (existingEntry.collaborators.length + 1);
+                                        c[existingPerson] = Math.max(0, (c[existingPerson] ?? 0) - pointsPerPerson);
+                                        existingEntry.collaborators.forEach(collaborator => {
+                                          c[collaborator] = Math.max(0, (c[collaborator] ?? 0) - pointsPerPerson);
+                                        });
+                                      } else {
+                                        // Solo work - remove full points
+                                        c[existingPerson] = Math.max(0, (c[existingPerson] ?? 0) - totalPoints);
+                                      }
+                                      
+                                      // Add full points to new claim (they can choose collaboration later)
+                                      c[newPerson] = (c[newPerson] ?? 0) + totalPoints;
                                     }
-                                    
-                                    // Remove credit from existing claim
-                                    c[existingPerson] = Math.max(0, (c[existingPerson] ?? 0) - points);
-                                    
-                                    // Add credit to new claim
-                                    c[newPerson] = (c[newPerson] ?? 0) + points;
                                     
                                     return { ...s, credits: c };
                                   });
@@ -1150,7 +1380,11 @@
                                       alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they completed ${choreName}.\n\nThis conflict has been logged for admin review.`);
                                       return;
                                     }
-                                    claimOptionalChore(choreName, name);
+                                    
+                                    // Set up the collaboration modal for admin
+                                    setPendingChoreClaim({ choreName, completedBy: name });
+                                    setSelectedCollaborators([]);
+                                    setShowCollaborationModal(true);
                                   }}
                                 >
                                   {choreName}
