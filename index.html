@@ -31,6 +31,10 @@
               parsed.queueNight = [...parsed.queue].reverse();
               delete parsed.queue;
             }
+            // Migration: ensure bathrooms exist
+            if (!parsed.bathrooms) {
+              parsed.bathrooms = defaultState.bathrooms;
+            }
             return parsed;
           }
           return defaultValue;
@@ -96,6 +100,20 @@
           description: "Other household tasks not listed above"
         }
       },
+      bathrooms: {
+        "Bathroom 1": {
+          pair: ["Kavya", "Avani"],
+          currentResponsible: "Kavya",
+          lastCleaned: null,
+          lastCleanedBy: null
+        },
+        "Bathroom 2": {
+          pair: ["Himani", "Khushi"],
+          currentResponsible: "Himani",
+          lastCleaned: null,
+          lastCleanedBy: null
+        }
+      },
       paused: {},
       credits: {},
       history: [],
@@ -139,6 +157,117 @@
       const [showCollaborationModal, setShowCollaborationModal] = useState(false);
       const [pendingChoreClaim, setPendingChoreClaim] = useState(null);
       const [selectedCollaborators, setSelectedCollaborators] = useState([]);
+      const [pendingOtherChores, setPendingOtherChores] = useState([]);
+
+      // Function to check for roommate call-outs
+      function getRoommateCallouts() {
+        const callouts = [];
+        const now = new Date();
+        const cstNow = new Date(now.toLocaleString("en-US", {timeZone: "America/Chicago"}));
+        
+        // Check for roommates who haven't done their responsible shift by the next shift
+        const recentHistory = history.filter(h => {
+          const entryDate = new Date(h.when);
+          const cstEntryDate = new Date(entryDate.toLocaleString("en-US", {timeZone: "America/Chicago"}));
+          const hoursDiff = (cstNow - cstEntryDate) / (1000 * 60 * 60);
+          return hoursDiff <= 72; // Check last 72 hours for better detection
+        });
+        
+        // Check 3PM shifts
+        const threePMEntries = recentHistory.filter(h => h.kind === '3pm');
+        const nightEntries = recentHistory.filter(h => h.kind === 'night');
+        
+        // Check if current 3PM person hasn't done their shift
+        if (current3pm) {
+          const threePMHistory = threePMEntries.filter(h => 
+            h.runBy === current3pm || h.unloadBy === current3pm
+          );
+          
+          if (threePMHistory.length === 0) {
+            // Check if they've been at the top for too long
+            const lastThreePMEntry = threePMEntries[threePMEntries.length - 1];
+            if (lastThreePMEntry) {
+              const lastEntryDate = new Date(lastThreePMEntry.when);
+              const cstLastEntryDate = new Date(lastEntryDate.toLocaleString("en-US", {timeZone: "America/Chicago"}));
+              const hoursSinceLastThreePM = (cstNow - cstLastEntryDate) / (1000 * 60 * 60);
+              
+              // If it's been more than 36 hours since last 3PM shift, call out current person
+              if (hoursSinceLastThreePM > 36) {
+                callouts.push({
+                  type: 'missed_shift',
+                  roommate: current3pm,
+                  shift: '3PM',
+                  reason: `Hasn't done their 3PM shift in over 36 hours`
+                });
+              }
+            } else {
+              // No 3PM entries in recent history, call out current person
+              callouts.push({
+                type: 'missed_shift',
+                roommate: current3pm,
+                shift: '3PM',
+                reason: `Hasn't done their 3PM shift - no recent 3PM activity`
+              });
+            }
+          }
+        }
+        
+        // Check if current Night person hasn't done their shift
+        if (currentNight) {
+          const nightHistory = nightEntries.filter(h => 
+            h.runBy === currentNight || h.unloadBy === currentNight
+          );
+          
+          if (nightHistory.length === 0) {
+            // Check if they've been at the top for too long
+            const lastNightEntry = nightEntries[nightEntries.length - 1];
+            if (lastNightEntry) {
+              const lastEntryDate = new Date(lastNightEntry.when);
+              const cstLastEntryDate = new Date(lastEntryDate.toLocaleString("en-US", {timeZone: "America/Chicago"}));
+              const hoursSinceLastNight = (cstNow - cstLastEntryDate) / (1000 * 60 * 60);
+              
+              // If it's been more than 36 hours since last night shift, call out current person
+              if (hoursSinceLastNight > 36) {
+                callouts.push({
+                  type: 'missed_shift',
+                  roommate: currentNight,
+                  shift: 'Night',
+                  reason: `Hasn't done their Night shift in over 36 hours`
+                });
+              }
+            } else {
+              // No night entries in recent history, call out current person
+              callouts.push({
+                type: 'missed_shift',
+                roommate: currentNight,
+                shift: 'Night',
+                reason: `Hasn't done their Night shift - no recent night activity`
+              });
+            }
+          }
+        }
+        
+        // Check for roommates who haven't done any optional chores in 7 days
+        const sevenDaysAgo = new Date(cstNow.getTime() - (7 * 24 * 60 * 60 * 1000));
+        
+        roommates.forEach(roommate => {
+          const recentOptionalChores = history.filter(h => 
+            h.completedBy === roommate && 
+            !h.kind && // Optional chores don't have 'kind'
+            new Date(h.when) > sevenDaysAgo
+          );
+          
+          if (recentOptionalChores.length === 0) {
+            callouts.push({
+              type: 'no_optional_chores',
+              roommate: roommate,
+              reason: `Hasn't done any optional chores in 7 days`
+            });
+          }
+        });
+        
+        return callouts;
+      }
 
       // Get current date and time in CST
       function getCurrentDateTime() {
@@ -184,9 +313,12 @@
         queue3pm: state.queue3pm || defaultState.queue3pm,
         queueNight: state.queueNight || defaultState.queueNight,
         optionalChores: state.optionalChores || defaultState.optionalChores,
+        bathrooms: state.bathrooms || defaultState.bathrooms,
       };
+
+
       
-      const { roommates, queue3pm, queueNight, optionalChores, paused, credits, history, pins } = safeState;
+      const { roommates, queue3pm, queueNight, optionalChores, bathrooms, paused, credits, history, pins } = safeState;
 
       const activeQueue3pm = useMemo(
         () => queue3pm.filter((n) => !paused[n]),
@@ -313,6 +445,27 @@
         ));
       }
 
+      function approveOtherChore(choreId) {
+        const chore = pendingOtherChores.find(c => c.id === choreId);
+        if (!chore) return;
+        
+        // Claim the chore with the collaborators that were already selected
+        claimOptionalChore(chore.choreName, chore.completedBy, chore.collaborators || []);
+        
+        // Mark as approved
+        setPendingOtherChores(prev => prev.map(c => 
+          c.id === choreId ? { ...c, status: "approved" } : c
+        ));
+        
+        alert(`Approved: "${chore.choreName}" completed by ${chore.completedBy}${chore.collaborators && chore.collaborators.length > 0 ? ` with ${chore.collaborators.join(', ')}` : ''}`);
+      }
+
+      function rejectOtherChore(choreId) {
+        setPendingOtherChores(prev => prev.map(c => 
+          c.id === choreId ? { ...c, status: "rejected" } : c
+        ));
+      }
+
       function setPin(name, pinRaw) {
         const currentUser = prompt("Enter your name to set PIN:");
         if (currentUser === name) {
@@ -360,6 +513,7 @@
         });
         
         const conflictingEntry = recentHistory.find(h => {
+          // Only check for conflicts on the same action type
           if (action === 'run' && h.runBy === person) return false; // Same person, no conflict
           if (action === 'unload' && h.unloadBy === person) return false; // Same person, no conflict
           if (action === 'complete' && h.completedBy === person) return false; // Same person, no conflict
@@ -388,41 +542,74 @@
       }
 
       function addCredits({ runBy, unloadBy, kind }) {
-        setState((s) => {
-          const c = { ...s.credits };
-          const currentPerson = kind === '3pm' ? activeQueue3pm[0] : activeQueueNight[0];
-          const isFavor = (runBy !== currentPerson || unloadBy !== currentPerson);
-          
-          // Standard points only (no bonus) for whoever actually does the work
-          if (runBy) {
-            c[runBy] = (c[runBy] ?? 0) + 0.5;
+        console.log('addCredits called with:', { runBy, unloadBy, kind, unloadByType: typeof unloadBy, unloadByNull: unloadBy === null });
+        const currentPerson = kind === '3pm' ? activeQueue3pm[0] : activeQueueNight[0];
+        
+        // Determine the scenario and assign points accordingly
+        let runCredit = 0.5;
+        let unloadCredit = 0.5;
+        let currentPersonDidSomething = false;
+        
+        if (runBy && unloadBy && unloadBy !== null) {
+          // Both tasks completed
+          if (runBy === currentPerson && unloadBy === currentPerson) {
+            // Current person did both - standard rate
+            runCredit = 0.5;
+            unloadCredit = 0.5;
+            currentPersonDidSomething = true;
+          } else if (runBy === currentPerson || unloadBy === currentPerson) {
+            // Current person did one, someone else did the other - helper gets bonus
+            if (runBy === currentPerson) {
+              // Current person ran, someone else unloaded
+              runCredit = 0.5;
+              unloadCredit = 0.8; // Bonus for helper
+              currentPersonDidSomething = true;
+            } else {
+              // Current person unloaded, someone else ran
+              runCredit = 0.8; // Bonus for helper
+              unloadCredit = 0.5;
+              currentPersonDidSomething = true;
+            }
+          } else {
+            // Someone else did both - standard rate for helper, current person stays accountable
+            runCredit = 0.5;
+            unloadCredit = 0.5;
+            currentPersonDidSomething = false;
           }
-          if (unloadBy) {
-            c[unloadBy] = (c[unloadBy] ?? 0) + 0.5;
+        } else if (runBy && (!unloadBy || unloadBy === null)) {
+          // Only run completed
+          if (runBy === currentPerson) {
+            runCredit = 0.5;
+            currentPersonDidSomething = true;
+          } else {
+            runCredit = 0.5;
+            currentPersonDidSomething = false;
           }
-          
-          const entry = {
-            id: Math.random().toString(36).slice(2),
-            when: new Date().toISOString(),
-            kind,
-            runBy,
-            unloadBy,
-            runCredit: 0.5,
-            unloadCredit: 0.5,
-            isFavor,
-            currentPersonDidSomething: (runBy === currentPerson || unloadBy === currentPerson)
-          };
-          return { ...s, credits: c, history: [entry, ...s.history].slice(0, 200) };
-        });
+        } else if (unloadBy && (!runBy || runBy === null)) {
+          // Only unload completed
+          if (unloadBy === currentPerson) {
+            unloadCredit = 0.5;
+            currentPersonDidSomething = true;
+          } else {
+            unloadCredit = 0.5;
+            currentPersonDidSomething = false;
+          }
+        }
+        
+        return {
+          runCredit,
+          unloadCredit,
+          currentPersonDidSomething
+        };
       }
 
       function claimOptionalChore(choreName, completedBy, collaborators = []) {
+        // For "Other" chores, use default 1.0 points, otherwise get from optionalChores
         const chore = optionalChores[choreName];
-        if (!chore) return;
+        const totalPoints = chore ? chore.points : 1.0; // Default 1.0 for custom chores
         
         setState((s) => {
           const c = { ...s.credits };
-          const totalPoints = chore.points;
           
           if (collaborators.length > 0) {
             // Distribute points evenly among all collaborators
@@ -444,31 +631,73 @@
             collaborators,
             points: totalPoints,
             pointsPerPerson: collaborators.length > 0 ? totalPoints / (collaborators.length + 1) : totalPoints,
-            description: chore.description
+            description: chore ? chore.description : "Custom chore"
           };
+          
           return { ...s, credits: c, history: [entry, ...s.history].slice(0, 200) };
         });
       }
 
       function completeLoad(kind, { runBy, unloadBy, advance = true }) {
         const currentPerson = kind === '3pm' ? activeQueue3pm[0] : activeQueueNight[0];
-        const currentPersonDidSomething = (runBy === currentPerson || unloadBy === currentPerson);
         
-        addCredits({ runBy, unloadBy, kind });
+        // Calculate credits and determine if current person did something
+        const { runCredit, unloadCredit, currentPersonDidSomething } = addCredits({ runBy, unloadBy, kind });
         
-        // NEW LOGIC: Queue only advances if the assigned person did at least one task
-        // If someone else does both tasks, the assigned person stays in place
-        if (advance && currentPersonDidSomething) {
-          if (kind === '3pm') {
-            advanceQueue3pm();
-          } else if (kind === 'night') {
-            advanceQueueNight();
+        setState((s) => {
+          const c = { ...s.credits };
+          
+          // Apply credits
+          if (runBy) {
+            c[runBy] = (c[runBy] ?? 0) + runCredit;
           }
-        }
-        // If assigned person did nothing, queue doesn't advance (they stay at the top)
+          if (unloadBy) {
+            c[unloadBy] = (c[unloadBy] ?? 0) + unloadCredit;
+          }
+          
+          // Create history entry
+          const entry = {
+            id: Math.random().toString(36).slice(2),
+            when: new Date().toISOString(),
+            kind,
+            runBy,
+            unloadBy,
+            runCredit,
+            unloadCredit,
+            isFavor: (runBy !== currentPerson || unloadBy !== currentPerson),
+            currentPersonDidSomething
+          };
+          
+          // Queue advancement logic:
+          // 1. If current person did at least one task, they move to bottom
+          // 2. If someone else did both tasks, current person stays at top (held accountable)
+          // 3. If current person did one task and someone else did the other, current person moves to bottom
+          let newState = { ...s, credits: c, history: [entry, ...s.history].slice(0, 200) };
+          
+          if (advance && currentPersonDidSomething) {
+            if (kind === '3pm') {
+              const rotated = [...s.queue3pm.slice(1), s.queue3pm[0]];
+              const full = rotated.concat(s.queue3pm.filter((n) => s.paused[n]));
+              newState = { ...newState, queue3pm: full };
+            } else if (kind === 'night') {
+              const rotated = [...s.queueNight.slice(1), s.queueNight[0]];
+              const full = rotated.concat(s.queueNight.filter((n) => s.paused[n]));
+              newState = { ...newState, queueNight: full };
+            }
+          }
+          // If current person did nothing, queue doesn't advance (they stay at the top)
+          
+          return newState;
+        });
       }
 
       function handleComplete(kind) {
+        // Check if current user is paused
+        if (paused[currentUser]) {
+          alert(`❌ You are currently paused and cannot claim tasks. Please contact admin to unpause you.`);
+          return;
+        }
+        
         // Since user is already logged in with PIN, automatically use current user
         const runBy = currentUser;
         const unloadBy = currentUser;
@@ -483,8 +712,29 @@
       }
 
       function handleClaimChore(choreName) {
+        // Check if current user is paused
+        if (paused[currentUser]) {
+          alert(`❌ You are currently paused and cannot claim tasks. Please contact admin to unpause you.`);
+          return;
+        }
+        
         // Since user is already logged in with PIN, automatically use current user
         const completedBy = currentUser;
+        
+        // If it's "Other", prompt for the specific chore name and set up collaboration
+        if (choreName === "Other") {
+          const customChoreName = prompt("What chore did you complete? (e.g., 'Cleaned Bathroom', 'Organized Pantry'):");
+          if (!customChoreName || customChoreName.trim() === "") {
+            alert("Please enter a chore name.");
+            return;
+          }
+          
+          // Set up the collaboration modal for the custom chore
+          setPendingChoreClaim({ choreName: customChoreName.trim(), completedBy, isOtherChore: true });
+          setSelectedCollaborators([]);
+          setShowCollaborationModal(true);
+          return;
+        }
         
         // Check for conflicts before proceeding
         if (checkForConflicts(choreName, 'complete', completedBy)) {
@@ -499,6 +749,12 @@
       }
 
       function handleCompleteChore(choreName) {
+        // Check if current user is paused
+        if (paused[currentUser]) {
+          alert(`❌ You are currently paused and cannot claim tasks. Please contact admin to unpause you.`);
+          return;
+        }
+        
         // Since user is already logged in with PIN, automatically use current user
         const completedBy = currentUser;
         
@@ -512,6 +768,12 @@
       }
 
       function quickClaim(kind, name, action) {
+        // Check if the person is paused
+        if (paused[name]) {
+          alert(`❌ ${name} is currently paused and cannot claim tasks. Please contact admin to unpause them.`);
+          return;
+        }
+        
         if (!requirePinFor(name)) return;
         
         if (action === 'run') {
@@ -519,14 +781,46 @@
             alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they ran the ${kind === '3pm' ? '3 PM' : 'Night'} load.\n\nThis conflict has been logged for admin review.`);
             return;
           }
-          completeLoad(kind, { runBy: name, unloadBy: name, advance: true });
+          completeLoad(kind, { runBy: name, unloadBy: null, advance: true });
         } else if (action === 'unload') {
-          if (checkForConflicts(kind, 'unload', name)) {
-            alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they unloaded the ${kind === '3pm' ? '3 PM' : 'Night'} load.\n\nThis conflict has been logged for admin review.`);
-            return;
+          // Check if there's already a history entry for this shift that we can update
+          const existingEntry = history.find(h => h.kind === kind && h.runBy && !h.unloadBy);
+          
+          if (existingEntry) {
+            // Update existing entry with unload
+            setState((s) => {
+              const updatedHistory = s.history.map(h => {
+                if (h.id === existingEntry.id) {
+                  // Calculate new credits
+                  const currentPerson = kind === '3pm' ? activeQueue3pm[0] : activeQueueNight[0];
+                  const runCredit = 0.5;
+                  const unloadCredit = existingEntry.runBy === currentPerson ? 0.5 : 0.8; // Bonus if helper
+                  
+                  // Update credits
+                  const c = { ...s.credits };
+                  c[name] = (c[name] ?? 0) + unloadCredit;
+                  
+                  return {
+                    ...h,
+                    unloadBy: name,
+                    unloadCredit,
+                    isFavor: true
+                  };
+                }
+                return h;
+              });
+              
+              return { ...s, history: updatedHistory };
+            });
+          } else {
+            // Create new entry if no existing run entry
+            if (checkForConflicts(kind, 'unload', name)) {
+              alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they unloaded the ${kind === '3pm' ? '3 PM' : 'Night'} load.\n\nThis conflict has been logged for admin review.`);
+              return;
+            }
+            const runner = kind === '3pm' ? current3pm : currentNight || name;
+            completeLoad(kind, { runBy: runner, unloadBy: name, advance: true });
           }
-          const runner = kind === '3pm' ? current3pm : currentNight || name;
-          completeLoad(kind, { runBy: runner, unloadBy: name, advance: true });
         } else if (action === 'both') {
           if (checkForConflicts(kind, 'run', name) || checkForConflicts(kind, 'unload', name)) {
             alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they did the ${kind === '3pm' ? '3 PM' : 'Night'} load.\n\nThis conflict has been logged for admin review.`);
@@ -537,6 +831,12 @@
       }
 
       function quickClaimChore(choreName, name) {
+        // Check if the person is paused
+        if (paused[name]) {
+          alert(`❌ ${name} is currently paused and cannot claim tasks. Please contact admin to unpause them.`);
+          return;
+        }
+        
         if (!requirePinFor(name)) return;
         
         if (checkForConflicts(choreName, 'complete', name)) {
@@ -545,6 +845,79 @@
         }
         
         claimOptionalChore(choreName, name);
+      }
+
+      // Bathroom handoff functions
+      function getBathroomForUser(user) {
+        return Object.entries(bathrooms).find(([bathroomName, bathroom]) => 
+          bathroom.pair.includes(user)
+        );
+      }
+
+      function canSeeBathroom(user, bathroomName) {
+        const bathroom = bathrooms[bathroomName];
+        return bathroom && bathroom.pair.includes(user);
+      }
+
+      function handleBathroomClean(bathroomName) {
+        // Check if current user is paused
+        if (paused[currentUser]) {
+          alert(`❌ You are currently paused and cannot claim tasks. Please contact admin to unpause you.`);
+          return;
+        }
+        
+        const bathroom = bathrooms[bathroomName];
+        if (!bathroom) {
+          console.error('Bathroom not found:', bathroomName);
+          return;
+        }
+
+        // Check if current user is in the pair for this bathroom
+        if (!bathroom.pair.includes(currentUser)) {
+          alert("You can only clean bathrooms assigned to your pair.");
+          return;
+        }
+
+        // Check if current user is currently responsible
+        if (bathroom.currentResponsible !== currentUser) {
+          alert(`You are not currently responsible for ${bathroomName}. ${bathroom.currentResponsible} is responsible.`);
+          return;
+        }
+
+        // Hand off responsibility to the other person in the pair
+        const otherPerson = bathroom.pair.find(person => person !== currentUser);
+        
+
+        
+        setState((s) => {
+          const updatedBathrooms = { ...s.bathrooms };
+          updatedBathrooms[bathroomName] = {
+            ...updatedBathrooms[bathroomName],
+            currentResponsible: otherPerson,
+            lastCleaned: new Date().toISOString(),
+            lastCleanedBy: currentUser
+          };
+
+          // Add to history
+          const entry = {
+            id: Math.random().toString(36).slice(2),
+            when: new Date().toISOString(),
+            type: 'bathroom_clean',
+            bathroomName,
+            cleanedBy: currentUser,
+            nextResponsible: otherPerson
+          };
+
+          const newState = { 
+            ...s, 
+            bathrooms: updatedBathrooms,
+            history: [entry, ...s.history].slice(0, 200)
+          };
+
+          return newState;
+        });
+
+        alert(`✅ ${bathroomName} cleaned! Responsibility now passes to ${otherPerson}.`);
       }
 
       // Show login modal if not logged in
@@ -648,6 +1021,57 @@
               <Label>Chore Rotation • PINs enabled • Fair distribution</Label>
             </header>
 
+            {/* Roommate Call-outs Section */}
+            {(() => {
+              const callouts = getRoommateCallouts();
+              if (callouts.length === 0) return null;
+              
+              return (
+                <div className="rounded-2xl shadow-sm border p-4 bg-red-50 border-red-200">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-xl">🚨</span>
+                    <h2 className="text-lg font-semibold text-red-800">Roommate Call-outs</h2>
+                  </div>
+                  <div className="space-y-2">
+                    {callouts.map((callout, index) => (
+                      <div key={index} className="flex items-center gap-3 p-3 bg-white rounded-lg border border-red-300">
+                        <div className="flex-shrink-0">
+                          {callout.type === 'missed_shift' ? (
+                            <span className="text-orange-500 text-lg">⏰</span>
+                          ) : (
+                            <span className="text-red-500 text-lg">🧹</span>
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <div className="font-medium text-red-800">
+                            {callout.roommate}
+                          </div>
+                          <div className="text-sm text-red-600">
+                            {callout.reason}
+                          </div>
+                        </div>
+                        <div className="flex-shrink-0">
+                          {callout.type === 'missed_shift' && (
+                            <span className="px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded-full">
+                              {callout.shift} Shift
+                            </span>
+                          )}
+                          {callout.type === 'no_optional_chores' && (
+                            <span className="px-2 py-1 bg-red-100 text-red-800 text-xs rounded-full">
+                              No Optional Chores
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="text-xs text-red-600 mt-2">
+                    💡 These call-outs help keep everyone accountable and maintain fair chore distribution.
+                  </div>
+                </div>
+              );
+            })()}
+
             <Section title="House Rules (Quick Ref)">
               <ul className="list-disc pl-6 space-y-1 text-sm">
                 <li>Everyone rinses their own dishes. Dishwasher-safe items go in immediately.</li>
@@ -720,12 +1144,48 @@
                       <div className="rounded-xl border p-4 bg-white">
                         <div className="font-medium text-sm mb-3">Record your actions:</div>
                         <div className="grid grid-cols-3 gap-2">
-                          <button className="px-3 py-2 rounded-lg border bg-blue-50 hover:bg-blue-100" onClick={() => quickClaim('3pm', currentUser, 'run')}>I ran 3 PM</button>
-                          <button className="px-3 py-2 rounded-lg border bg-green-50 hover:bg-green-100" onClick={() => quickClaim('3pm', currentUser, 'unload')}>I unloaded 3 PM</button>
-                          <button className="px-3 py-2 rounded-lg border bg-purple-50 hover:bg-purple-100" onClick={() => quickClaim('3pm', currentUser, 'both')}>BOTH 3PM</button>
-                          <button className="px-3 py-2 rounded-lg border bg-blue-50 hover:bg-blue-100" onClick={() => quickClaim('night', currentUser, 'run')}>I ran Night</button>
-                          <button className="px-3 py-2 rounded-lg border bg-green-50 hover:bg-green-100" onClick={() => quickClaim('night', currentUser, 'unload')}>I unloaded Night</button>
-                          <button className="px-3 py-2 rounded-lg border bg-purple-50 hover:bg-purple-100" onClick={() => quickClaim('night', currentUser, 'both')}>BOTH NIGHT</button>
+                          <button 
+                            className={`px-3 py-2 rounded-lg border ${paused[currentUser] ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-blue-50 hover:bg-blue-100'}`} 
+                            onClick={() => !paused[currentUser] && quickClaim('3pm', currentUser, 'run')}
+                            disabled={paused[currentUser]}
+                          >
+                            {paused[currentUser] ? 'PAUSED' : 'I ran 3 PM'}
+                          </button>
+                          <button 
+                            className={`px-3 py-2 rounded-lg border ${paused[currentUser] ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-green-50 hover:bg-green-100'}`} 
+                            onClick={() => !paused[currentUser] && quickClaim('3pm', currentUser, 'unload')}
+                            disabled={paused[currentUser]}
+                          >
+                            {paused[currentUser] ? 'PAUSED' : 'I unloaded 3 PM'}
+                          </button>
+                          <button 
+                            className={`px-3 py-2 rounded-lg border ${paused[currentUser] ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-purple-50 hover:bg-purple-100'}`} 
+                            onClick={() => !paused[currentUser] && quickClaim('3pm', currentUser, 'both')}
+                            disabled={paused[currentUser]}
+                          >
+                            {paused[currentUser] ? 'PAUSED' : 'BOTH 3PM'}
+                          </button>
+                          <button 
+                            className={`px-3 py-2 rounded-lg border ${paused[currentUser] ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-blue-50 hover:bg-blue-100'}`} 
+                            onClick={() => !paused[currentUser] && quickClaim('night', currentUser, 'run')}
+                            disabled={paused[currentUser]}
+                          >
+                            {paused[currentUser] ? 'PAUSED' : 'I ran Night'}
+                          </button>
+                          <button 
+                            className={`px-3 py-2 rounded-lg border ${paused[currentUser] ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-green-50 hover:bg-green-100'}`} 
+                            onClick={() => !paused[currentUser] && quickClaim('night', currentUser, 'unload')}
+                            disabled={paused[currentUser]}
+                          >
+                            {paused[currentUser] ? 'PAUSED' : 'I unloaded Night'}
+                          </button>
+                          <button 
+                            className={`px-3 py-2 rounded-lg border ${paused[currentUser] ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-purple-50 hover:bg-purple-100'}`} 
+                            onClick={() => !paused[currentUser] && quickClaim('night', currentUser, 'both')}
+                            disabled={paused[currentUser]}
+                          >
+                            {paused[currentUser] ? 'PAUSED' : 'BOTH NIGHT'}
+                          </button>
                   </div>
                       </div>
                     </div>
@@ -743,11 +1203,11 @@
                   <p className="text-xs text-gray-500">Full order: {activeQueue3pm.join(" → ")}</p>
                   <div className="flex gap-2">
                     <button 
-                      className={`px-3 py-2 rounded-xl ${isGuest ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-800'}`} 
-                      onClick={() => !isGuest && handleComplete("3pm")}
-                      disabled={isGuest}
+                      className={`px-3 py-2 rounded-xl ${isGuest ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : paused[currentUser] ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-800'}`} 
+                      onClick={() => !isGuest && !paused[currentUser] && handleComplete("3pm")}
+                      disabled={isGuest || paused[currentUser]}
                     >
-                      {isGuest ? 'Record 3 PM (Guest Mode - View Only)' : 'Record 3 PM (I did both)'}
+                      {isGuest ? 'Record 3 PM (Guest Mode - View Only)' : paused[currentUser] ? 'Record 3 PM (PAUSED)' : 'Record 3 PM (I did both)'}
                     </button>
                   </div>
                   <p className="text-xs text-gray-500">Flex Rule: If you filled it or someone texted they can't make it, you may run/unload on their behalf. Credits split to the actual people (PINs required).</p>
@@ -758,11 +1218,11 @@
                   <p className="text-xs text-gray-500">Full order: {activeQueueNight.join(" → ")}</p>
                   <div className="flex gap-2">
                     <button 
-                      className={`px-3 py-2 rounded-xl ${isGuest ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-800'}`} 
-                      onClick={() => !isGuest && handleComplete("night")}
-                      disabled={isGuest}
+                      className={`px-3 py-2 rounded-xl ${isGuest ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : paused[currentUser] ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-800'}`} 
+                      onClick={() => !isGuest && !paused[currentUser] && handleComplete("night")}
+                      disabled={isGuest || paused[currentUser]}
                     >
-                      {isGuest ? 'Record Night (Guest Mode - View Only)' : 'Record Night (I did both)'}
+                      {isGuest ? 'Record Night (Guest Mode - View Only)' : paused[currentUser] ? 'Record Night (PAUSED)' : 'Record Night (I did both)'}
                     </button>
                   </div>
                 </div>
@@ -780,12 +1240,15 @@
                     {Object.keys(optionalChores).map((choreName) => (
                       <button 
                         key={choreName}
-                        className="p-3 rounded-lg border bg-white hover:bg-gray-50 text-left"
-                        onClick={() => handleClaimChore(choreName)}
+                        className={`p-3 rounded-lg border text-left ${paused[currentUser] ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white hover:bg-gray-50'}`}
+                        onClick={() => !paused[currentUser] && handleClaimChore(choreName)}
+                        disabled={paused[currentUser]}
                       >
                         <div className="font-medium text-sm">{choreName}</div>
                         <div className="text-xs text-gray-500 mt-1">{optionalChores[choreName].description}</div>
-                        <div className="text-xs font-semibold text-blue-600 mt-1">+{optionalChores[choreName].points} points</div>
+                        <div className="text-xs font-semibold text-blue-600 mt-1">
+                          {paused[currentUser] ? 'PAUSED' : `+${optionalChores[choreName].points} points`}
+                        </div>
                       </button>
                     ))}
                   </div>
@@ -794,6 +1257,79 @@
                   <div className="text-center text-gray-500 py-8">
                     <p>Guest Mode - View Only</p>
                     <p className="text-sm mt-2">Log in to claim optional chores for points</p>
+                  </div>
+                )}
+              </div>
+            </Section>
+
+            <Section title="Bathroom Handoff System">
+              <div className="space-y-4">
+                <div className="text-sm text-gray-600 mb-3">
+                  <p><b>How it works:</b> Each pair is responsible for one bathroom. When you finish cleaning, responsibility automatically passes to your partner.</p>
+                  <p><b>Pairs:</b> (Kavya, Avani) → Bathroom 1 • (Himani, Khushi) → Bathroom 2</p>
+                </div>
+                
+                <div className="grid md:grid-cols-2 gap-4">
+                  {Object.entries(bathrooms).map(([bathroomName, bathroom]) => {
+                    const canSee = !isGuest && canSeeBathroom(currentUser, bathroomName);
+                    const isResponsible = bathroom.currentResponsible === currentUser;
+                    const lastCleanedDate = bathroom.lastCleaned ? new Date(bathroom.lastCleaned) : null;
+                    
+
+                    
+                    return (
+                      <div key={bathroomName} className={`rounded-xl border p-4 ${canSee ? 'bg-white' : 'bg-gray-100'}`}>
+                        <div className="flex items-center justify-between mb-3">
+                          <h3 className="font-semibold">{bathroomName}</h3>
+                          <div className="text-xs text-gray-500">
+                            {bathroom.pair.join(" & ")}
+                          </div>
+                        </div>
+                        
+                        {canSee ? (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm">Currently responsible:</span>
+                              <span className={`font-medium ${isResponsible ? 'text-green-600' : 'text-gray-700'}`}>
+                                {bathroom.currentResponsible}
+                                {isResponsible && <span className="ml-1">(You!)</span>}
+                              </span>
+                            </div>
+                            
+                            {lastCleanedDate && (
+                              <div className="text-xs text-gray-600">
+                                Last cleaned: {lastCleanedDate.toLocaleDateString()} by {bathroom.lastCleanedBy}
+                              </div>
+                            )}
+                            
+                            {isResponsible && !isGuest ? (
+                              <button
+                                className={`w-full px-4 py-2 rounded-lg font-medium ${paused[currentUser] ? 'bg-gray-400 text-gray-200 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                                onClick={() => !paused[currentUser] && handleBathroomClean(bathroomName)}
+                                disabled={paused[currentUser]}
+                              >
+                                {paused[currentUser] ? '⏸️ PAUSED - Cannot Clean' : `✅ I Finished Cleaning ${bathroomName}`}
+                              </button>
+                            ) : (
+                              <div className="text-center py-2 text-gray-500 text-sm">
+                                {isGuest ? 'Guest Mode - View Only' : `${bathroom.currentResponsible} is responsible`}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="text-center py-4 text-gray-500">
+                            <p>This bathroom is managed by</p>
+                            <p className="font-medium">{bathroom.pair.join(" & ")}</p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                
+                {!isGuest && (
+                  <div className="text-xs text-gray-500 mt-3 p-3 bg-gray-50 rounded-lg">
+                    <p><b>💡 Tip:</b> Only you and your partner can see your assigned bathroom. When you finish cleaning, click the button to hand off responsibility!</p>
                   </div>
                 )}
               </div>
@@ -912,7 +1448,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    {history.slice(0,20).map((h) => (
+                    {history.filter(h => h.type !== 'bathroom_clean' && !h.bathroomName && !h.cleanedBy).slice(0,20).map((h) => (
                       <tr key={h.id} className="border-b last:border-0">
                         <td className="py-2 pr-2 whitespace-nowrap">
                           {(() => {
@@ -947,10 +1483,22 @@
                           })()}
                         </td>
                         <td className="py-2 pr-2">
-                          {h.kind ? (h.kind === '3pm' ? '3 PM' : 'Night') : h.choreName}
+                          {h.kind ? (
+                            h.kind === '3pm' ? 
+                              (h.runBy && h.unloadBy ? '3 PM Dishwasher' : 
+                               h.runBy ? '3 PM Dishwasher Started' : 
+                               h.unloadBy ? '3 PM Dishwasher Unloaded' : '3 PM Dishwasher') :
+                            (h.runBy && h.unloadBy ? 'Night Dishwasher' : 
+                             h.runBy ? 'Night Dishwasher Started' : 
+                             h.unloadBy ? 'Night Dishwasher Unloaded' : 'Night Dishwasher')
+                          ) : h.choreName}
                         </td>
-                        <td className="py-2 pr-2">{h.runBy || (h.completedBy ? '—' : '')}</td>
-                        <td className="py-2 pr-2">{h.unloadBy || (h.completedBy ? '—' : '')}</td>
+                        <td className="py-2 pr-2">
+                          {h.runBy || (h.completedBy ? h.completedBy : '')}
+                        </td>
+                        <td className="py-2 pr-2">
+                          {h.unloadBy}
+                        </td>
                         <td className="py-2 pr-2">
                           {h.kind ? (
                             <>
@@ -1000,7 +1548,7 @@
                   <div className="space-y-4">
                     <div className="text-sm text-gray-600">
                       <p><b>Chore:</b> {pendingChoreClaim?.choreName}</p>
-                      <p><b>Total Points:</b> {optionalChores[pendingChoreClaim?.choreName]?.points || 0}</p>
+                      <p><b>Total Points:</b> {optionalChores[pendingChoreClaim?.choreName]?.points || 1.0}</p>
                       <p className="mt-2">
                         {pendingChoreClaim?.completedBy === currentUser 
                           ? 'Select who you worked with on this chore:'
@@ -1062,8 +1610,8 @@
                       <p className="mt-1">
                         <b>Points per person:</b> {
                           selectedCollaborators.length > 0 
-                            ? ((optionalChores[pendingChoreClaim?.choreName]?.points || 0) / (selectedCollaborators.length + 1)).toFixed(2)
-                            : (optionalChores[pendingChoreClaim?.choreName]?.points || 0)
+                            ? ((optionalChores[pendingChoreClaim?.choreName]?.points || 1.0) / (selectedCollaborators.length + 1)).toFixed(2)
+                            : (optionalChores[pendingChoreClaim?.choreName]?.points || 1.0)
                         }
                       </p>
                     </div>
@@ -1083,14 +1631,30 @@
                         className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                         onClick={() => {
                           if (pendingChoreClaim) {
-                            claimOptionalChore(pendingChoreClaim.choreName, pendingChoreClaim.completedBy, selectedCollaborators);
+                            if (pendingChoreClaim.isOtherChore) {
+                              // For "Other" chores, send to admin for approval
+                              const otherChore = {
+                                id: Math.random().toString(36).slice(2),
+                                choreName: pendingChoreClaim.choreName,
+                                completedBy: pendingChoreClaim.completedBy,
+                                collaborators: selectedCollaborators,
+                                timestamp: new Date().toISOString(),
+                                status: "pending"
+                              };
+                              
+                              setPendingOtherChores(prev => [...prev, otherChore]);
+                              alert(`"${pendingChoreClaim.choreName}" has been sent to admin for approval with ${selectedCollaborators.length + 1} people. You'll get points once approved.`);
+                            } else {
+                              // For regular chores, claim immediately
+                              claimOptionalChore(pendingChoreClaim.choreName, pendingChoreClaim.completedBy, selectedCollaborators);
+                            }
                           }
                           setShowCollaborationModal(false);
                           setPendingChoreClaim(null);
                           setSelectedCollaborators([]);
                         }}
                       >
-                        Confirm ({selectedCollaborators.length + 1} people)
+                        {pendingChoreClaim?.isOtherChore ? 'Send to Admin' : `Confirm (${selectedCollaborators.length + 1} people)`}
                       </button>
                     </div>
                   </div>
@@ -1146,6 +1710,51 @@
                               <button 
                                 className="px-2 py-1 bg-red-600 text-white rounded text-[10px]"
                                 onClick={() => rejectPauseRequest(request.id)}
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {pendingOtherChores.filter(c => c.status === "pending").length > 0 && (
+                      <div className="space-y-3">
+                        <h4 className="font-medium text-sm text-green-600">📝 Other Chores Pending Approval</h4>
+                        {pendingOtherChores.filter(c => c.status === "pending").map((chore) => (
+                          <div key={chore.id} className="border border-green-200 rounded-lg p-3 bg-green-50">
+                            <div className="text-sm font-medium mb-2">
+                              {chore.completedBy} completed: "{chore.choreName}"
+                              {chore.collaborators && chore.collaborators.length > 0 && (
+                                <div className="text-xs text-gray-600 mt-1">
+                                  Collaborators: {chore.collaborators.join(', ')}
+                                </div>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-600 mb-2">
+                              {(() => {
+                                const date = new Date(chore.timestamp);
+                                const cstDate = new Date(date.toLocaleString("en-US", {timeZone: "America/Chicago"}));
+                                return cstDate.toLocaleString("en-US", {
+                                  timeZone: "America/Chicago",
+                                  month: "short",
+                                  day: "numeric",
+                                  hour: "numeric",
+                                  minute: "2-digit",
+                                  hour12: true
+                                });
+                              })()}
+                            </div>
+                            <div className="flex gap-2">
+                              <button 
+                                className="px-2 py-1 bg-green-600 text-white rounded text-[10px]"
+                                onClick={() => approveOtherChore(chore.id)}
+                              >
+                                Approve
+                              </button>
+                              <button 
+                                className="px-2 py-1 bg-red-600 text-white rounded text-[10px]"
+                                onClick={() => rejectOtherChore(chore.id)}
                               >
                                 Reject
                               </button>
@@ -1376,13 +1985,24 @@
                                   key={choreName}
                                   className="px-1 py-1 bg-blue-100 rounded"
                                   onClick={() => {
-                                    if (checkForConflicts(choreName, 'complete', name)) {
-                                      alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they completed ${choreName}.\n\nThis conflict has been logged for admin review.`);
+                                    // If it's "Other", prompt for the specific chore name
+                                    let finalChoreName = choreName;
+                                    if (choreName === "Other") {
+                                      const customChoreName = prompt(`What chore did ${name} complete? (e.g., 'Cleaned Bathroom', 'Organized Pantry'):`);
+                                      if (!customChoreName || customChoreName.trim() === "") {
+                                        alert("Please enter a chore name.");
+                                        return;
+                                      }
+                                      finalChoreName = customChoreName.trim();
+                                    }
+                                    
+                                    if (checkForConflicts(finalChoreName, 'complete', name)) {
+                                      alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they completed ${finalChoreName}.\n\nThis conflict has been logged for admin review.`);
                                       return;
                                     }
                                     
                                     // Set up the collaboration modal for admin
-                                    setPendingChoreClaim({ choreName, completedBy: name });
+                                    setPendingChoreClaim({ choreName: finalChoreName, completedBy: name });
                                     setSelectedCollaborators([]);
                                     setShowCollaborationModal(true);
                                   }}
@@ -1390,6 +2010,82 @@
                                   {choreName}
                                 </button>
                               ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <h4 className="font-medium text-sm">Bathroom Management</h4>
+                      <div className="grid grid-cols-2 gap-3">
+                        {Object.entries(bathrooms).map(([bathroomName, bathroom]) => (
+                          <div key={bathroomName} className="border rounded-lg p-2">
+                            <div className="text-xs font-medium mb-2">{bathroomName}</div>
+                            <div className="text-xs text-gray-600 mb-2">
+                              Pair: {bathroom.pair.join(" & ")}
+                            </div>
+                            <div className="text-xs text-gray-600 mb-2">
+                              Current: {bathroom.currentResponsible}
+                            </div>
+                            <div className="grid grid-cols-2 gap-1 text-[10px]">
+                              {bathroom.pair.map((person) => (
+                                <button 
+                                  key={person}
+                                  className={`px-1 py-1 rounded ${bathroom.currentResponsible === person ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}
+                                  onClick={() => {
+                                    setState((s) => {
+                                      const updatedBathrooms = { ...s.bathrooms };
+                                      updatedBathrooms[bathroomName] = {
+                                        ...updatedBathrooms[bathroomName],
+                                        currentResponsible: person
+                                      };
+                                      return { ...s, bathrooms: updatedBathrooms };
+                                    });
+                                  }}
+                                >
+                                  Set {person}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="mt-2">
+                              <button 
+                                className="w-full px-1 py-1 bg-purple-100 text-purple-700 rounded text-[10px]"
+                                onClick={() => {
+                                  const newPerson = prompt(`Enter who cleaned ${bathroomName}:`);
+                                  if (newPerson && bathroom.pair.includes(newPerson)) {
+                                    const otherPerson = bathroom.pair.find(p => p !== newPerson);
+                                    setState((s) => {
+                                      const updatedBathrooms = { ...s.bathrooms };
+                                      updatedBathrooms[bathroomName] = {
+                                        ...updatedBathrooms[bathroomName],
+                                        currentResponsible: otherPerson,
+                                        lastCleaned: new Date().toISOString(),
+                                        lastCleanedBy: newPerson
+                                      };
+
+                                      // Add to history
+                                      const entry = {
+                                        id: Math.random().toString(36).slice(2),
+                                        when: new Date().toISOString(),
+                                        type: 'bathroom_clean',
+                                        bathroomName,
+                                        cleanedBy: newPerson,
+                                        nextResponsible: otherPerson
+                                      };
+
+                                      return { 
+                                        ...s, 
+                                        bathrooms: updatedBathrooms,
+                                        history: [entry, ...s.history].slice(0, 200)
+                                      };
+                                    });
+                                    alert(`${bathroomName} cleaned by ${newPerson}, responsibility now with ${otherPerson}`);
+                                  }
+                                }}
+                              >
+                                Record Clean
+                              </button>
+
                             </div>
                           </div>
                         ))}
@@ -1498,6 +2194,7 @@
                           onClick={() => {
                             if (confirm("Clear all history? This will remove all past actions but keep current credits and queues.")) {
                               setState((s) => ({ ...s, history: [] }));
+                              setConflicts([]); // Also clear conflicts since they're based on history
                               setShowAdminPanel(false);
                             }
                           }}
@@ -1536,6 +2233,20 @@
                           }}
                         >
                           Reset Everything
+                        </button>
+                        <button 
+                          className="px-3 py-2 bg-purple-600 text-white rounded-lg text-sm"
+                          onClick={() => {
+                            if (confirm("Reset bathroom assignments to default?")) {
+                              setState((s) => ({ 
+                                ...s, 
+                                bathrooms: defaultState.bathrooms 
+                              }));
+                              alert("Bathroom assignments reset to default.");
+                            }
+                          }}
+                        >
+                          Reset Bathrooms
                         </button>
                       </div>
                     </div>
