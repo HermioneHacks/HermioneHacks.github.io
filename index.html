@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Dishwasher Rotation • By Load</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <title>Roommate Chores • Rotation System</title>
+  <link rel="stylesheet" href="styles.css">
   <!-- React 18 UMD + ReactDOM -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -17,13 +17,23 @@
   <script type="text/babel">
     const { useState, useEffect, useMemo } = React;
 
-    const STORAGE_KEY = "dishwasher_app_state_v2_pins_html";
+    const STORAGE_KEY = "roommate_chores_app_v2_with_optional";
 
     function useLocalStorageState(defaultValue) {
       const [state, setState] = useState(() => {
         try {
           const raw = localStorage.getItem(STORAGE_KEY);
-          return raw ? JSON.parse(raw) : defaultValue;
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            // Migration: if old structure exists, convert to new structure
+            if (parsed.queue && !parsed.queue3pm) {
+              parsed.queue3pm = [...parsed.queue];
+              parsed.queueNight = [...parsed.queue].reverse();
+              delete parsed.queue;
+            }
+            return parsed;
+          }
+          return defaultValue;
         } catch {
           return defaultValue;
         }
@@ -37,12 +47,64 @@
     }
 
     const defaultState = {
-      roommates: ["A", "B", "C", "D"],
-      queue: ["A", "B", "C", "D"], // rotation by load
-      paused: {}, // { name: true }
-      credits: {}, // { name: number }
-      history: [], // { id, when, kind: '3pm'|'night', runBy, unloadBy, runCredit, unloadCredit }
-      pins: {}, // { name: "1234" }
+      roommates: ["Khushi", "Kavya", "Himani", "Avani"],
+      queue3pm: ["Khushi", "Kavya", "Himani", "Avani"], // Forward rotation
+      queueNight: ["Avani", "Himani", "Kavya", "Khushi"], // Backward rotation
+      optionalChores: {
+        "Cleaned Microwave": {
+          points: 0.5,
+          description: "Clean inside and outside of microwave"
+        },
+        "Cleaned Counters and Bar": {
+          points: 1.0,
+          description: "Wipe down kitchen counters and bar area"
+        },
+        "Towels Laundry": {
+          points: 1.5,
+          description: "Wash, dry, and fold towels"
+        },
+        "Cleaned Stove": {
+          points: 1.0,
+          description: "Clean stove top and oven"
+        },
+        "Cleaned Fridge": {
+          points: 1.5,
+          description: "Clean inside and outside of refrigerator"
+        },
+        "Cleaned Couches": {
+          points: 1.0,
+          description: "Vacuum and clean couch surfaces"
+        },
+        "Cleaned TV and Tables": {
+          points: 0.5,
+          description: "Dust and clean TV area and tables"
+        },
+        "Swiffered": {
+          points: 0.5,
+          description: "Swiffer floors throughout the house"
+        },
+        "Swept/Vacuumed": {
+          points: 1.0,
+          description: "Sweep or vacuum floors"
+        },
+        "Fixed Couch": {
+          points: 2.0,
+          description: "Fix couch cushions, covers, or other couch issues"
+        },
+        "Other": {
+          points: 1.0,
+          description: "Other household tasks not listed above"
+        }
+      },
+      paused: {},
+      credits: {},
+      history: [],
+      pins: {
+        "Khushi": "1111",
+        "Kavya": "2222", 
+        "Himani": "2024",
+        "Avani": "3333"
+      },
     };
 
     const Label = ({ children }) => (
@@ -65,20 +127,80 @@
 
     function DishwasherApp() {
       const [state, setState] = useLocalStorageState(defaultState);
-      const { roommates, queue, paused, credits, history, pins } = state;
+      const [showAdminPanel, setShowAdminPanel] = useState(false);
+      const [adminPassword, setAdminPassword] = useState("");
+      const [currentUser, setCurrentUser] = useState(null);
+      const [isGuest, setIsGuest] = useState(false);
+      const [showLoginModal, setShowLoginModal] = useState(true);
+      const [loginPin, setLoginPin] = useState("");
+      const [loginError, setLoginError] = useState("");
+      const [conflicts, setConflicts] = useState([]);
+      const [pauseRequests, setPauseRequests] = useState([]);
 
-      const activeQueue = useMemo(
-        () => queue.filter((n) => !paused[n]),
-        [queue, paused]
+      // Get current date and time in CST
+      function getCurrentDateTime() {
+        const now = new Date();
+        const cstTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Chicago"}));
+        
+        const months = ["January", "February", "March", "April", "May", "June", 
+                       "July", "August", "September", "October", "November", "December"];
+        const month = months[cstTime.getMonth()];
+        const day = cstTime.getDate();
+        const year = cstTime.getFullYear();
+        
+        const hour = cstTime.getHours();
+        let greeting;
+        if (hour < 12) {
+          greeting = "Good morning";
+        } else if (hour < 17) {
+          greeting = "Good afternoon";
+        } else if (hour < 22) {
+          greeting = "Good evening";
+        } else {
+          greeting = "Good night";
+        }
+        
+        const timeString = cstTime.toLocaleTimeString("en-US", {
+          timeZone: "America/Chicago",
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true
+        });
+        
+        return {
+          dateString: `${month} ${day}, ${year}`,
+          greeting,
+          timeString
+        };
+      }
+      
+      // Ensure new chore structure exists
+      const safeState = {
+        ...defaultState,
+        ...state,
+        queue3pm: state.queue3pm || defaultState.queue3pm,
+        queueNight: state.queueNight || defaultState.queueNight,
+        optionalChores: state.optionalChores || defaultState.optionalChores,
+      };
+      
+      const { roommates, queue3pm, queueNight, optionalChores, paused, credits, history, pins } = safeState;
+
+      const activeQueue3pm = useMemo(
+        () => queue3pm.filter((n) => !paused[n]),
+        [queue3pm, paused]
       );
 
-      // Ensure credits & pins exist for all roommates
+      const activeQueueNight = useMemo(
+        () => queueNight.filter((n) => !paused[n]),
+        [queueNight, paused]
+      );
+
       useEffect(() => {
         const updatedCredits = { ...credits };
         const updatedPins = { ...pins };
         roommates.forEach((r) => {
           if (updatedCredits[r] == null) updatedCredits[r] = 0;
-          if (updatedPins[r] == null) updatedPins[r] = ""; // empty means no PIN set yet
+          if (updatedPins[r] == null) updatedPins[r] = "";
         });
         if (
           JSON.stringify(updatedCredits) !== JSON.stringify(credits) ||
@@ -88,72 +210,194 @@
         }
       }, [roommates]);
 
-      const current = activeQueue[0] || null;
-      const next = activeQueue[1] || null;
+      const current3pm = activeQueue3pm[0] || null;
+      const next3pm = activeQueue3pm[1] || null;
+      const currentNight = activeQueueNight[0] || null;
+      const nextNight = activeQueueNight[1] || null;
 
-      function setRoommatesFromInput(value) {
-        const list = value
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
-        if (!list.length) return;
-        setState((s) => ({
-          ...s,
-          roommates: list,
-          queue: list.filter((n) => !s.paused[n]),
-          credits: list.reduce((acc, n) => ({ ...acc, [n]: s.credits[n] ?? 0 }), {}),
-          pins: list.reduce((acc, n) => ({ ...acc, [n]: s.pins[n] ?? "" }), {}),
-        }));
+      function handleLogin() {
+        setLoginError("");
+        const enteredPin = loginPin.trim();
+        
+        if (!enteredPin) {
+          setLoginError("Please enter your PIN");
+          return;
+        }
+        
+        // Check if PIN matches any roommate
+        const matchedUser = roommates.find(name => pins[name] === enteredPin);
+        
+        if (matchedUser) {
+          setCurrentUser(matchedUser);
+          setShowLoginModal(false);
+          setLoginPin("");
+        } else {
+          setLoginError("Invalid PIN. Please try again.");
+        }
       }
 
-      function reorderQueue(fromIdx, toIdx) {
-        if (fromIdx === toIdx) return;
-        const active = [...activeQueue];
-        const [moved] = active.splice(fromIdx, 1);
-        active.splice(toIdx, 0, moved);
-        const pausedList = state.queue.filter((n) => paused[n]);
-        setState((s) => ({ ...s, queue: active.concat(pausedList) }));
+      function handleGuestMode() {
+        setIsGuest(true);
+        setCurrentUser("Guest");
+        setShowLoginModal(false);
+        setLoginPin("");
+        setLoginError("");
       }
 
-      function advanceQueue() {
-        if (!activeQueue.length) return;
-        const rotated = [...activeQueue.slice(1), activeQueue[0]];
-        const full = rotated.concat(state.queue.filter((n) => paused[n]));
-        setState((s) => ({ ...s, queue: full }));
+      function handleLogout() {
+        setCurrentUser(null);
+        setIsGuest(false);
+        setShowLoginModal(true);
+        setLoginPin("");
+        setLoginError("");
       }
 
-      function togglePause(name) {
+      function advanceQueue3pm() {
+        if (!activeQueue3pm.length) return;
+        const rotated = [...activeQueue3pm.slice(1), activeQueue3pm[0]];
+        const full = rotated.concat(state.queue3pm.filter((n) => paused[n]));
+        setState((s) => ({ ...s, queue3pm: full }));
+      }
+
+      function advanceQueueNight() {
+        if (!activeQueueNight.length) return;
+        const rotated = [...activeQueueNight.slice(1), activeQueueNight[0]];
+        const full = rotated.concat(state.queueNight.filter((n) => paused[n]));
+        setState((s) => ({ ...s, queueNight: full }));
+      }
+
+      function requestPause(name) {
+        const isCurrentlyPaused = paused[name];
+        const action = isCurrentlyPaused ? "unpause" : "pause";
+        
+        const request = {
+          id: Math.random().toString(36).slice(2),
+          name,
+          action,
+          timestamp: new Date().toISOString(),
+          status: "pending"
+        };
+        
+        setPauseRequests(prev => [...prev, request]);
+        
+        if (currentUser === "Himani") {
+          // Admin can approve immediately
+          if (confirm(`${name} wants to ${action}. Approve now?`)) {
+            approvePauseRequest(request.id);
+          }
+        } else {
+          alert(`Pause request sent to admin. ${name} will be ${action}d once approved.`);
+        }
+      }
+
+      function approvePauseRequest(requestId) {
+        const request = pauseRequests.find(r => r.id === requestId);
+        if (!request) return;
+        
         setState((s) => {
-          const p = { ...s.paused, [name]: !s.paused[name] };
-          const active = s.queue.filter((n) => !p[n]);
-          const pausedList = s.queue.filter((n) => p[n]);
-          return { ...s, paused: p, queue: active.concat(pausedList) };
+          const p = { ...s.paused, [request.name]: request.action === "pause" };
+          return { ...s, paused: p };
         });
+        
+        setPauseRequests(prev => prev.map(r => 
+          r.id === requestId ? { ...r, status: "approved" } : r
+        ));
+      }
+
+      function rejectPauseRequest(requestId) {
+        setPauseRequests(prev => prev.map(r => 
+          r.id === requestId ? { ...r, status: "rejected" } : r
+        ));
       }
 
       function setPin(name, pinRaw) {
-        const pin = (pinRaw || "").trim();
-        if (pin && !/^[0-9]{4,8}$/.test(pin)) {
-          alert("PIN must be 4–8 digits.");
-          return;
+        const currentUser = prompt("Enter your name to set PIN:");
+        if (currentUser === name) {
+          const pin = (pinRaw || "").trim();
+          if (pin && !/^[0-9]{4,8}$/.test(pin)) {
+            alert("PIN must be 4–8 digits.");
+            return;
+          }
+          setState((s) => ({ ...s, pins: { ...s.pins, [name]: pin } }));
+        } else if (currentUser !== null) {
+          const password = prompt("Enter admin password to set PINs:");
+          if (password !== "Himani2024") {
+            alert("Incorrect admin password. Only Himani can set PINs for others.");
+            return;
+          }
+          const pin = (pinRaw || "").trim();
+          if (pin && !/^[0-9]{4,8}$/.test(pin)) {
+            alert("PIN must be 4–8 digits.");
+            return;
+          }
+          setState((s) => ({ ...s, pins: { ...s.pins, [name]: pin } }));
         }
-        setState((s) => ({ ...s, pins: { ...s.pins, [name]: pin } }));
       }
 
       function requirePinFor(name) {
         const expected = (pins[name] || "").trim();
-        if (!expected) return true; // no PIN set → allow
+        if (!expected) return true;
         const entered = prompt(`Enter PIN for ${name}`)?.trim();
         if (entered === expected) return true;
         alert("Incorrect PIN.");
         return false;
       }
 
+      function checkForConflicts(kindOrChore, action, person) {
+        // Check if someone else already claimed this task recently (within last 2 hours for dishwasher, 30 minutes for optional chores)
+        const timeWindow = kindOrChore === '3pm' || kindOrChore === 'night' ? 2 * 60 * 60 * 1000 : 30 * 60 * 1000;
+        const timeAgo = new Date(Date.now() - timeWindow);
+        
+        const recentHistory = history.filter(h => {
+          if (kindOrChore === '3pm' || kindOrChore === 'night') {
+            return h.kind === kindOrChore && new Date(h.when) > timeAgo;
+          } else {
+            return h.choreName === kindOrChore && new Date(h.when) > timeAgo;
+          }
+        });
+        
+        const conflictingEntry = recentHistory.find(h => {
+          if (action === 'run' && h.runBy === person) return false; // Same person, no conflict
+          if (action === 'unload' && h.unloadBy === person) return false; // Same person, no conflict
+          if (action === 'complete' && h.completedBy === person) return false; // Same person, no conflict
+          if (action === 'run' && h.runBy && h.runBy !== person) return true; // Different person claimed run
+          if (action === 'unload' && h.unloadBy && h.unloadBy !== person) return true; // Different person claimed unload
+          if (action === 'complete' && h.completedBy && h.completedBy !== person) return true; // Different person claimed completion
+          return false;
+        });
+        
+        if (conflictingEntry) {
+          const conflict = {
+            id: Math.random().toString(36).slice(2),
+            kindOrChore,
+            action,
+            newClaim: person,
+            existingClaim: action === 'run' ? conflictingEntry.runBy : 
+                         action === 'unload' ? conflictingEntry.unloadBy : 
+                         conflictingEntry.completedBy,
+            timestamp: new Date().toISOString(),
+            resolved: false
+          };
+          setConflicts(prev => [...prev, conflict]);
+          return true;
+        }
+        return false;
+      }
+
       function addCredits({ runBy, unloadBy, kind }) {
         setState((s) => {
           const c = { ...s.credits };
-          if (runBy) c[runBy] = (c[runBy] ?? 0) + 0.5;
-          if (unloadBy) c[unloadBy] = (c[unloadBy] ?? 0) + 0.5;
+          const currentPerson = kind === '3pm' ? activeQueue3pm[0] : activeQueueNight[0];
+          const isFavor = (runBy !== currentPerson || unloadBy !== currentPerson);
+          
+          // Standard points only (no bonus) for whoever actually does the work
+          if (runBy) {
+            c[runBy] = (c[runBy] ?? 0) + 0.5;
+          }
+          if (unloadBy) {
+            c[unloadBy] = (c[unloadBy] ?? 0) + 0.5;
+          }
+          
           const entry = {
             id: Math.random().toString(36).slice(2),
             when: new Date().toISOString(),
@@ -162,60 +406,240 @@
             unloadBy,
             runCredit: 0.5,
             unloadCredit: 0.5,
+            isFavor,
+            currentPersonDidSomething: (runBy === currentPerson || unloadBy === currentPerson)
+          };
+          return { ...s, credits: c, history: [entry, ...s.history].slice(0, 200) };
+        });
+      }
+
+      function claimOptionalChore(choreName, completedBy, collaborators = []) {
+        const chore = optionalChores[choreName];
+        if (!chore) return;
+        
+        setState((s) => {
+          const c = { ...s.credits };
+          const totalPoints = chore.points;
+          
+          if (collaborators.length > 0) {
+            // Distribute points evenly among all collaborators
+            const pointsPerPerson = totalPoints / (collaborators.length + 1); // +1 for the main person
+            c[completedBy] = (c[completedBy] ?? 0) + pointsPerPerson;
+            collaborators.forEach(collaborator => {
+              c[collaborator] = (c[collaborator] ?? 0) + pointsPerPerson;
+            });
+          } else {
+            // Single person gets all points
+            c[completedBy] = (c[completedBy] ?? 0) + totalPoints;
+          }
+          
+          const entry = {
+            id: Math.random().toString(36).slice(2),
+            when: new Date().toISOString(),
+            choreName,
+            completedBy,
+            collaborators,
+            points: totalPoints,
+            pointsPerPerson: collaborators.length > 0 ? totalPoints / (collaborators.length + 1) : totalPoints,
+            description: chore.description
           };
           return { ...s, credits: c, history: [entry, ...s.history].slice(0, 200) };
         });
       }
 
       function completeLoad(kind, { runBy, unloadBy, advance = true }) {
+        const currentPerson = kind === '3pm' ? activeQueue3pm[0] : activeQueueNight[0];
+        const currentPersonDidSomething = (runBy === currentPerson || unloadBy === currentPerson);
+        
         addCredits({ runBy, unloadBy, kind });
-        if (advance) advanceQueue();
+        
+        // NEW LOGIC: Queue only advances if the assigned person did at least one task
+        // If someone else does both tasks, the assigned person stays in place
+        if (advance && currentPersonDidSomething) {
+          if (kind === '3pm') {
+            advanceQueue3pm();
+          } else if (kind === 'night') {
+            advanceQueueNight();
+          }
+        }
+        // If assigned person did nothing, queue doesn't advance (they stay at the top)
       }
 
       function handleComplete(kind) {
-        // Ask who ran / unloaded (Flex Rule), then verify PINs for those names
-        const defaultName = current ?? roommates[0] ?? "";
-        const runBy = prompt(
-          `${kind === "3pm" ? "3 PM" : "Night"} LOAD\nWho RAN it? (default: ${defaultName})\nType a name exactly or leave blank`
-        )?.trim() || defaultName;
-
-        if (!runBy) return alert("Please set roommates first.");
-        if (!requirePinFor(runBy)) return; // PIN check for runner
-
-        const unloadBy = (
-          prompt(
-            `${kind === "3pm" ? "3 PM" : "Night"} LOAD\nWho UNLOADED it? (default: ${runBy})\nType a name exactly or leave blank`
-          )?.trim() || runBy
-        );
-
-        if (!unloadBy) return alert("Please set roommates first.");
-        if (!requirePinFor(unloadBy)) return; // PIN check for unloader
-
+        // Since user is already logged in with PIN, automatically use current user
+        const runBy = currentUser;
+        const unloadBy = currentUser;
+        
+        // Check for conflicts before proceeding
+        if (checkForConflicts(kind, 'run', runBy) || checkForConflicts(kind, 'unload', unloadBy)) {
+          alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they did the ${kind === '3pm' ? '3 PM' : 'Night'} load.\n\nThis conflict has been logged for admin review.`);
+          return;
+        }
+        
         completeLoad(kind, { runBy, unloadBy, advance: true });
       }
 
+      function handleClaimChore(choreName) {
+        // Since user is already logged in with PIN, automatically use current user
+        const completedBy = currentUser;
+        
+        // Check for conflicts before proceeding
+        if (checkForConflicts(choreName, 'complete', completedBy)) {
+          alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they completed ${choreName}.\n\nThis conflict has been logged for admin review.`);
+          return;
+        }
+        
+        claimOptionalChore(choreName, completedBy);
+      }
+
+      function handleCompleteChore(choreName) {
+        // Since user is already logged in with PIN, automatically use current user
+        const completedBy = currentUser;
+        
+        // Check for conflicts before proceeding
+        if (checkForConflicts(choreName, 'complete', completedBy)) {
+          alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they completed ${choreName}.\n\nThis conflict has been logged for admin review.`);
+          return;
+        }
+        
+        completeChore(choreName, { completedBy, advance: true });
+      }
+
       function quickClaim(kind, name, action) {
-        // action: 'run' | 'unload' — lets a roommate click their own button
         if (!requirePinFor(name)) return;
+        
         if (action === 'run') {
+          if (checkForConflicts(kind, 'run', name)) {
+            alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they ran the ${kind === '3pm' ? '3 PM' : 'Night'} load.\n\nThis conflict has been logged for admin review.`);
+            return;
+          }
           completeLoad(kind, { runBy: name, unloadBy: name, advance: true });
         } else if (action === 'unload') {
-          const runner = current || name;
+          if (checkForConflicts(kind, 'unload', name)) {
+            alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they unloaded the ${kind === '3pm' ? '3 PM' : 'Night'} load.\n\nThis conflict has been logged for admin review.`);
+            return;
+          }
+          const runner = kind === '3pm' ? current3pm : currentNight || name;
           completeLoad(kind, { runBy: runner, unloadBy: name, advance: true });
+        } else if (action === 'both') {
+          if (checkForConflicts(kind, 'run', name) || checkForConflicts(kind, 'unload', name)) {
+            alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they did the ${kind === '3pm' ? '3 PM' : 'Night'} load.\n\nThis conflict has been logged for admin review.`);
+            return;
+          }
+          completeLoad(kind, { runBy: name, unloadBy: name, advance: true });
         }
       }
 
-      function resetCredits() {
-        if (!confirm("Reset all credits to 0?")) return;
-        setState((s) => ({ ...s, credits: Object.fromEntries(Object.keys(s.credits).map((k) => [k, 0])) }));
+      function quickClaimChore(choreName, name) {
+        if (!requirePinFor(name)) return;
+        
+        if (checkForConflicts(choreName, 'complete', name)) {
+          alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they completed ${choreName}.\n\nThis conflict has been logged for admin review.`);
+          return;
+        }
+        
+        claimOptionalChore(choreName, name);
+      }
+
+      // Show login modal if not logged in
+      if (showLoginModal) {
+        return (
+          <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full">
+              <h1 className="text-2xl font-bold text-center mb-6">Roommate Chores</h1>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2">Enter Your PIN</label>
+                  <input
+                    type="password"
+                    className="w-full rounded-lg border px-4 py-3 text-center text-lg"
+                    placeholder="Enter your 4-8 digit PIN"
+                    value={loginPin}
+                    onChange={(e) => setLoginPin(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+                    autoFocus
+                  />
+                </div>
+                {loginError && (
+                  <div className="text-red-600 text-sm text-center">{loginError}</div>
+                )}
+                <button
+                  className="w-full bg-black text-white py-3 rounded-lg font-medium"
+                  onClick={handleLogin}
+                >
+                  Login
+                </button>
+                <div className="text-center">
+                  <div className="text-gray-400 text-sm mb-2">— or —</div>
+                  <button
+                    className="w-full bg-gray-200 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-300"
+                    onClick={handleGuestMode}
+                  >
+                    Continue as Guest (View Only)
+                  </button>
+                </div>
+                <div className="text-xs text-gray-500 text-center">
+                  Enter your PIN to access your personalized dashboard, or continue as guest to view only
+                </div>
+              </div>
+            </div>
+          </div>
+        );
       }
 
       return (
         <div className="min-h-screen bg-gray-50 text-gray-900 p-4 md:p-8">
           <div className="max-w-5xl mx-auto space-y-6">
             <header className="flex items-center justify-between">
-              <h1 className="text-2xl md:text-3xl font-bold">Dishwasher Rotation • By Load</h1>
-              <Label>Brunch Buffer: 11:00–14:00 • Night: 21:00–23:00 • PINs enabled</Label>
+              <div>
+                <h1 className="text-2xl md:text-3xl font-bold">Roommate Chores • Rotation System</h1>
+                <p className="text-sm text-gray-600 mt-1">
+                  Welcome, <b>{currentUser}</b>! 
+                  {isGuest && <span className="text-orange-600 font-medium"> (Guest Mode - View Only)</span>}
+                  <button className="text-blue-600 underline ml-2" onClick={handleLogout}>Logout</button>
+                </p>
+                <p className="text-xs text-gray-500">
+                  Today is: {getCurrentDateTime().dateString} • {getCurrentDateTime().greeting} • {getCurrentDateTime().timeString} CST
+                </p>
+                {!isGuest && (
+                  <button 
+                    className="text-xs text-blue-600 underline mt-1"
+                    onClick={() => {
+                      const newPin = prompt(`Enter new PIN for ${currentUser} (4-8 digits):`);
+                      if (newPin && /^[0-9]{4,8}$/.test(newPin)) {
+                        // Check if PIN is the same as current
+                        if (newPin === pins[currentUser]) {
+                          alert("New PIN cannot be the same as your current PIN. Please choose a different PIN.");
+                          return;
+                        }
+                        
+                        // Check if another roommate has this PIN
+                        const existingUser = roommates.find(name => name !== currentUser && pins[name] === newPin);
+                        if (existingUser) {
+                          alert(`PIN ${newPin} is already in use. Please choose a different PIN.`);
+                          return;
+                        }
+                        
+                        const confirmPin = prompt(`Confirm new PIN for ${currentUser} (4-8 digits):`);
+                        if (confirmPin === newPin) {
+                          setState((s) => ({ 
+                            ...s, 
+                            pins: { ...s.pins, [currentUser]: newPin } 
+                          }));
+                          alert(`${currentUser}'s PIN has been updated to ${newPin}`);
+                        } else if (confirmPin !== null) {
+                          alert("PINs don't match. PIN change cancelled.");
+                        }
+                      } else if (newPin !== null) {
+                        alert("PIN must be 4-8 digits.");
+                      }
+                    }}
+                  >
+                    Change My PIN
+                  </button>
+                )}
+              </div>
+              <Label>Chore Rotation • PINs enabled • Fair distribution</Label>
             </header>
 
             <Section title="House Rules (Quick Ref)">
@@ -224,7 +648,9 @@
                 <li>Hand-wash lane: big pots/pans, knives, wooden tools, non-safe plastics.</li>
                 <li>Rotation is by <b>load</b>. Flex Rule: you can run/unload for someone else; credits go to who actually did it.</li>
                 <li>Night load must be <b>run & unloaded before bed</b> so mornings start empty.</li>
-                <li>Don’t run during Brunch Buffer (11–14). Aim for a 15:00 load, and a 21:00–23:00 load.</li>
+                <li>Don't run during Brunch Buffer (11:00 AM–2:00 PM). Aim for a 3:00 PM load, and a 9:00 PM–11:00 PM load.</li>
+                <li><b>Optional Chores:</b> Extra tasks you can claim for points. No rotation - first come, first served!</li>
+                <li><b>Own Mess:</b> If it's solely your own mess, you are very much responsible for cleaning it up yourself.</li>
                 <li><b>PINs:</b> Each roommate sets a numeric PIN (4–8 digits). You must enter your PIN to claim "I ran" or "I unloaded".</li>
               </ul>
             </Section>
@@ -232,93 +658,147 @@
             <Section title="Roommates & Rotation">
               <div className="grid md:grid-cols-2 gap-4">
                 <div className="space-y-3">
-                  <label className="block text-sm font-medium">Names (comma-separated)</label>
-                  <input
-                    className="w-full rounded-xl border px-3 py-2"
-                    defaultValue={roommates.join(", ")}
-                    onBlur={(e) => setRoommatesFromInput(e.target.value)}
-                    placeholder="e.g., Alex, Brooke, Casey, Dev"
-                  />
-                  <div className="text-xs text-gray-500">Tip: Reorder queue with ↑ / ↓. Pause if someone is away.</div>
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {activeQueue.map((name, idx) => (
-                      <div key={name} className={\`px-3 py-1 rounded-full text-sm border shadow-sm \${idx===0?"bg-black text-white":"bg-white"}\`}>
-                        <div className="flex items-center gap-2">
-                          <span>{idx+1}. {name}</span>
-                          <button className="text-xs underline" onClick={() => togglePause(name)}>
-                            {paused[name] ? "Unpause" : "Pause"}
+                  <div className="text-sm font-medium">Roommates</div>
+                  <div className="text-lg font-semibold text-gray-700">{roommates.join(", ")}</div>
+                  <div className="text-xs text-gray-500">Tip: Pause if someone is away. Queue advances automatically when current person completes a load.</div>
+                  {!isGuest && (
+                    <div className="mt-3 p-3 bg-gray-50 rounded-lg">
+                      <div className="text-sm font-medium mb-2">Request Pause</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {roommates.map((name) => (
+                          <button 
+                            key={name}
+                            className={`px-3 py-2 rounded-lg text-sm border ${name === currentUser ? (paused[name] ? 'bg-green-100 border-green-300 text-green-800' : 'bg-white border-gray-300 text-gray-700') : 'opacity-50 cursor-not-allowed bg-gray-100 border-gray-200 text-gray-600'}`}
+                            onClick={() => name === currentUser && requestPause(name)}
+                            disabled={name !== currentUser}
+                          >
+                            {name}: {name === currentUser ? (paused[name] ? 'Request Unpause' : 'Request Pause') : (paused[name] ? 'Paused' : 'Unpaused')}
                           </button>
-                          <div className="flex items-center gap-1">
-                            <button className="text-xs" onClick={() => reorderQueue(idx, Math.max(0, idx-1))}>↑</button>
-                            <button className="text-xs" onClick={() => reorderQueue(idx, Math.min(activeQueue.length-1, idx+1))}>↓</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-sm font-medium mb-2">3 PM Queue (Forward)</div>
+                      <div className="flex flex-wrap gap-2">
+                        {activeQueue3pm.map((name, idx) => (
+                          <div key={`3pm-${name}`} className={`px-3 py-1 rounded-full text-sm border shadow-sm ${idx===0?"bg-black text-white":"bg-white"}`}>
+                            <div className="flex items-center gap-2">
+                              <span>{idx+1}. {name}</span>
+                            </div>
                           </div>
-                        </div>
+                        ))}
                       </div>
-                    ))}
+                      <div className="text-xs text-gray-500 mt-1">Full order: {activeQueue3pm.join(" → ")}</div>
+                    </div>
+                    <div>
+                      <div className="text-sm font-medium mb-2">Night Queue (Backward)</div>
+                      <div className="flex flex-wrap gap-2">
+                        {activeQueueNight.map((name, idx) => (
+                          <div key={`night-${name}`} className={`px-3 py-1 rounded-full text-sm border shadow-sm ${idx===0?"bg-black text-white":"bg-white"}`}>
+                            <div className="flex items-center gap-2">
+                              <span>{idx+1}. {name}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">Full order: {activeQueueNight.join(" → ")}</div>
+                    </div>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <div className="text-sm font-medium mb-1">Quick Claim (with PIN)</div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {roommates.map((name) => (
-                      <div key={name} className="rounded-xl border p-3 bg-white">
-                        <div className="font-medium text-sm mb-2">{name}</div>
-                        <div className="flex flex-wrap gap-2 text-xs">
-                          <button className="px-2 py-1 rounded-lg border" onClick={() => quickClaim('3pm', name, 'run')}>I ran 3 PM</button>
-                          <button className="px-2 py-1 rounded-lg border" onClick={() => quickClaim('3pm', name, 'unload')}>I unloaded 3 PM</button>
-                          <button className="px-2 py-1 rounded-lg border" onClick={() => quickClaim('night', name, 'run')}>I ran Night</button>
-                          <button className="px-2 py-1 rounded-lg border" onClick={() => quickClaim('night', name, 'unload')}>I unloaded Night</button>
+                                  {!isGuest && (
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium mb-1">Quick Actions for {currentUser}</div>
+                      <div className="rounded-xl border p-4 bg-white">
+                        <div className="font-medium text-sm mb-3">Record your actions:</div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <button className="px-3 py-2 rounded-lg border bg-blue-50 hover:bg-blue-100" onClick={() => quickClaim('3pm', currentUser, 'run')}>I ran 3 PM</button>
+                          <button className="px-3 py-2 rounded-lg border bg-green-50 hover:bg-green-100" onClick={() => quickClaim('3pm', currentUser, 'unload')}>I unloaded 3 PM</button>
+                          <button className="px-3 py-2 rounded-lg border bg-purple-50 hover:bg-purple-100" onClick={() => quickClaim('3pm', currentUser, 'both')}>BOTH 3PM</button>
+                          <button className="px-3 py-2 rounded-lg border bg-blue-50 hover:bg-blue-100" onClick={() => quickClaim('night', currentUser, 'run')}>I ran Night</button>
+                          <button className="px-3 py-2 rounded-lg border bg-green-50 hover:bg-green-100" onClick={() => quickClaim('night', currentUser, 'unload')}>I unloaded Night</button>
+                          <button className="px-3 py-2 rounded-lg border bg-purple-50 hover:bg-purple-100" onClick={() => quickClaim('night', currentUser, 'both')}>BOTH NIGHT</button>
                         </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
+                    </div>
+                  )}
               </div>
             </Section>
 
-            <Section title="PINs (4–8 digits)">
-              <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-3">
-                {roommates.map((n) => (
-                  <div key={n} className="rounded-xl border p-3 bg-white">
-                    <div className="text-sm font-medium mb-1">{n}</div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        className="w-full rounded-lg border px-3 py-2"
-                        type="password"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        placeholder={pins[n] ? "••••" : "Set PIN"}
-                        onBlur={(e) => setPin(n, e.target.value)}
-                      />
-                      <button className="text-xs underline" onClick={() => setPin(n, "")}>Clear</button>
-                    </div>
-                    <div className="text-[11px] text-gray-500 mt-1">PIN is stored locally on this device.</div>
-                  </div>
-                ))}
-              </div>
-            </Section>
+
 
             <Section title="Run / Unload Loads">
               <div className="grid md:grid-cols-2 gap-4">
                 <div className="rounded-2xl border p-4 space-y-3">
-                  <div className="flex items-center justify-between"><h3 className="font-semibold">3 PM Load</h3><Label>Run after 14:00</Label></div>
-                  <p className="text-sm text-gray-600">Default runner: <b>{current ?? "—"}</b>{next? \` • Next: \${next}\` : ""}</p>
+                  <div className="flex items-center justify-between"><h3 className="font-semibold">3 PM Load</h3><Label>Run after 2:00 PM</Label></div>
+                  <p className="text-sm text-gray-600">Current runner: <b>{current3pm ?? "—"}</b></p>
+                  <p className="text-xs text-gray-500">Full order: {activeQueue3pm.join(" → ")}</p>
                   <div className="flex gap-2">
-                    <button className="px-3 py-2 rounded-xl bg-black text-white" onClick={() => handleComplete("3pm")}>Record 3 PM (choose runners)</button>
+                    <button 
+                      className={`px-3 py-2 rounded-xl ${isGuest ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-800'}`} 
+                      onClick={() => !isGuest && handleComplete("3pm")}
+                      disabled={isGuest}
+                    >
+                      {isGuest ? 'Record 3 PM (Guest Mode - View Only)' : 'Record 3 PM (I did both)'}
+                    </button>
                   </div>
-                  <p className="text-xs text-gray-500">Flex Rule: If you filled it or someone texted they can’t make it, you may run/unload on their behalf. Credits split to the actual people (PINs required).</p>
+                  <p className="text-xs text-gray-500">Flex Rule: If you filled it or someone texted they can't make it, you may run/unload on their behalf. Credits split to the actual people (PINs required).</p>
                 </div>
                 <div className="rounded-2xl border p-4 space-y-3">
-                  <div className="flex items-center justify-between"><h3 className="font-semibold">Night Load</h3><Label>21:00–23:00 • Unload before bed</Label></div>
-                  <p className="text-sm text-gray-600">Default runner: <b>{current ?? "—"}</b>{next? \` • Next: \${next}\` : ""}</p>
+                  <div className="flex items-center justify-between"><h3 className="font-semibold">Night Load</h3><Label>9:00 PM–11:00 PM • Unload before bed</Label></div>
+                  <p className="text-sm text-gray-600">Current runner: <b>{currentNight ?? "—"}</b></p>
+                  <p className="text-xs text-gray-500">Full order: {activeQueueNight.join(" → ")}</p>
                   <div className="flex gap-2">
-                    <button className="px-3 py-2 rounded-xl bg-black text-white" onClick={() => handleComplete("night")}>Record Night (choose runners)</button>
+                    <button 
+                      className={`px-3 py-2 rounded-xl ${isGuest ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-800'}`} 
+                      onClick={() => !isGuest && handleComplete("night")}
+                      disabled={isGuest}
+                    >
+                      {isGuest ? 'Record Night (Guest Mode - View Only)' : 'Record Night (I did both)'}
+                    </button>
                   </div>
                 </div>
               </div>
             </Section>
 
-            <Section title="Credits & Balancing" extra={<button className="text-sm underline" onClick={resetCredits}>Reset credits</button>}>
+            <Section title="Optional Chores (Extra Points)">
+              <div className="space-y-4">
+                <div className="text-sm text-gray-600 mb-3">
+                  <p><b>Note:</b> If it's solely your own mess, you are very much responsible for cleaning it up yourself.</p>
+                  <p>These are extra tasks you can claim for points. No rotation - first come, first served!</p>
+                </div>
+                {!isGuest && (
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                    {Object.keys(optionalChores).map((choreName) => (
+                      <button 
+                        key={choreName}
+                        className="p-3 rounded-lg border bg-white hover:bg-gray-50 text-left"
+                        onClick={() => handleClaimChore(choreName)}
+                      >
+                        <div className="font-medium text-sm">{choreName}</div>
+                        <div className="text-xs text-gray-500 mt-1">{optionalChores[choreName].description}</div>
+                        <div className="text-xs font-semibold text-blue-600 mt-1">+{optionalChores[choreName].points} points</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {isGuest && (
+                  <div className="text-center text-gray-500 py-8">
+                    <p>Guest Mode - View Only</p>
+                    <p className="text-sm mt-2">Log in to claim optional chores for points</p>
+                  </div>
+                )}
+              </div>
+            </Section>
+
+            <Section title="Credits & Balancing" extra={
+              currentUser === "Himani" && !isGuest ? (
+                <div className="flex gap-2">
+                  <button className="text-sm underline text-red-600" onClick={() => setShowAdminPanel(true)}>Admin Panel</button>
+                </div>
+              ) : null
+            }>
               <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-3">
                 {roommates.map((n) => (
                   <div key={n} className="rounded-xl border p-3 bg-white">
@@ -336,7 +816,7 @@
                   <thead>
                     <tr className="text-left border-b">
                       <th className="py-2 pr-2">When</th>
-                      <th className="py-2 pr-2">Kind</th>
+                      <th className="py-2 pr-2">Task</th>
                       <th className="py-2 pr-2">Ran By</th>
                       <th className="py-2 pr-2">Unloaded By</th>
                       <th className="py-2 pr-2">Credits</th>
@@ -345,11 +825,56 @@
                   <tbody>
                     {history.slice(0,20).map((h) => (
                       <tr key={h.id} className="border-b last:border-0">
-                        <td className="py-2 pr-2 whitespace-nowrap">{new Date(h.when).toLocaleString()}</td>
-                        <td className="py-2 pr-2">{h.kind === '3pm' ? '3 PM' : 'Night'}</td>
-                        <td className="py-2 pr-2">{h.runBy}</td>
-                        <td className="py-2 pr-2">{h.unloadBy}</td>
-                        <td className="py-2 pr-2">+{h.runCredit}+{h.unloadCredit}</td>
+                        <td className="py-2 pr-2 whitespace-nowrap">
+                          {(() => {
+                            const date = new Date(h.when);
+                            const cstDate = new Date(date.toLocaleString("en-US", {timeZone: "America/Chicago"}));
+                            const today = new Date();
+                            const cstToday = new Date(today.toLocaleString("en-US", {timeZone: "America/Chicago"}));
+                            
+                            // Check if it's today
+                            const isToday = cstDate.toDateString() === cstToday.toDateString();
+                            
+                            const timeString = cstDate.toLocaleTimeString("en-US", {
+                              timeZone: "America/Chicago",
+                              hour: "numeric",
+                              minute: "2-digit",
+                              hour12: true
+                            });
+                            
+                            if (isToday) {
+                              return `Today at ${timeString}`;
+                            } else {
+                              const dateString = cstDate.toLocaleDateString("en-US", {
+                                timeZone: "America/Chicago",
+                                month: "short",
+                                day: "numeric",
+                                hour: "numeric",
+                                minute: "2-digit",
+                                hour12: true
+                              });
+                              return dateString;
+                            }
+                          })()}
+                        </td>
+                        <td className="py-2 pr-2">
+                          {h.kind ? (h.kind === '3pm' ? '3 PM' : 'Night') : h.choreName}
+                        </td>
+                        <td className="py-2 pr-2">{h.runBy || (h.completedBy ? '—' : '')}</td>
+                        <td className="py-2 pr-2">{h.unloadBy || (h.completedBy ? '—' : '')}</td>
+                        <td className="py-2 pr-2">
+                          {h.kind ? (
+                            <>
+                              +{h.runCredit}+{h.unloadCredit}
+                              {h.isFavor && <span className="text-xs text-blue-600 ml-1">(favor)</span>}
+                            </>
+                          ) : (
+                            <>
+                              +{h.points}
+                              {h.isFavor && <span className="text-xs text-blue-600 ml-1">(favor)</span>}
+                            </>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -358,8 +883,440 @@
             </Section>
 
             <footer className="text-xs text-gray-500 text-center pb-6">
-              Tip: You can host this file as-is on Netlify/Vercel/GitHub Pages. Data (including PINs) is saved <b>locally on this device</b>. For cross-device sync, wire up Supabase/Firebase.
+              <div className="mb-2">Tip: You can host this file as-is on Netlify/Vercel/GitHub Pages. Data (including PINs) is saved <b>locally on this device</b>.</div>
+              <div className="text-red-600 font-semibold">⚠️ ADMIN ACCESS: Only Himani can pause roommates, set PINs, or reset data. Others can only record their own chore completions.</div>
+
             </footer>
+
+            {showAdminPanel && (
+              <div style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'rgba(0,0,0,0.5)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 9999
+              }}>
+                <div className="bg-white rounded-xl p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                  <h3 className="text-lg font-semibold mb-4">Admin Panel</h3>
+                  <div className="space-y-4">
+                    {pauseRequests.filter(r => r.status === "pending").length > 0 && (
+                      <div className="space-y-3">
+                        <h4 className="font-medium text-sm text-blue-600">⏸️ Pause Requests</h4>
+                        {pauseRequests.filter(r => r.status === "pending").map((request) => (
+                          <div key={request.id} className="border border-blue-200 rounded-lg p-3 bg-blue-50">
+                            <div className="text-sm font-medium mb-2">
+                              {request.name} wants to {request.action}
+                            </div>
+                            <div className="text-xs text-gray-600 mb-2">
+                              {(() => {
+                                const date = new Date(request.timestamp);
+                                const cstDate = new Date(date.toLocaleString("en-US", {timeZone: "America/Chicago"}));
+                                return cstDate.toLocaleString("en-US", {
+                                  timeZone: "America/Chicago",
+                                  month: "short",
+                                  day: "numeric",
+                                  hour: "numeric",
+                                  minute: "2-digit",
+                                  hour12: true
+                                });
+                              })()}
+                            </div>
+                            <div className="flex gap-2">
+                              <button 
+                                className="px-2 py-1 bg-green-600 text-white rounded text-[10px]"
+                                onClick={() => approvePauseRequest(request.id)}
+                              >
+                                Approve
+                              </button>
+                              <button 
+                                className="px-2 py-1 bg-red-600 text-white rounded text-[10px]"
+                                onClick={() => rejectPauseRequest(request.id)}
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {conflicts.length > 0 && (
+                      <div className="space-y-3">
+                        <h4 className="font-medium text-sm text-red-600">⚠️ Conflicts to Resolve</h4>
+                        {conflicts.filter(c => !c.resolved).map((conflict) => (
+                          <div key={conflict.id} className="border border-red-200 rounded-lg p-3 bg-red-50">
+                            <div className="text-sm font-medium mb-2">
+                              {conflict.kindOrChore === '3pm' ? '3 PM' : 
+                               conflict.kindOrChore === 'night' ? 'Night' : 
+                               conflict.kindOrChore} - {conflict.action}
+                            </div>
+                            <div className="text-xs text-gray-600 mb-2">
+                              {conflict.existingClaim} claimed first, {conflict.newClaim} claimed second
+                            </div>
+                            <div className="text-xs text-gray-500 mb-2">
+                              {(() => {
+                                const date = new Date(conflict.timestamp);
+                                const cstDate = new Date(date.toLocaleString("en-US", {timeZone: "America/Chicago"}));
+                                return cstDate.toLocaleString("en-US", {
+                                  timeZone: "America/Chicago",
+                                  month: "short",
+                                  day: "numeric",
+                                  hour: "numeric",
+                                  minute: "2-digit",
+                                  hour12: true
+                                });
+                              })()}
+                            </div>
+                            <div className="flex gap-2">
+                              <button 
+                                className="px-2 py-1 bg-green-600 text-white rounded text-[10px]"
+                                onClick={() => {
+                                  // Give credit to the new claim, remove from existing
+                                  setState((s) => {
+                                    const c = { ...s.credits };
+                                    const existingPerson = conflict.existingClaim;
+                                    const newPerson = conflict.newClaim;
+                                    
+                                    // Determine points to add/remove based on conflict type
+                                    let points = 1.0;
+                                    if (conflict.kindOrChore === '3pm' || conflict.kindOrChore === 'night') {
+                                      points = 0.5; // Dishwasher tasks are 0.5 each
+                                    } else {
+                                      // Optional chore - get points from the chore definition
+                                      const chore = optionalChores[conflict.kindOrChore];
+                                      points = chore ? chore.points : 1.0;
+                                    }
+                                    
+                                    // Remove credit from existing claim
+                                    c[existingPerson] = Math.max(0, (c[existingPerson] ?? 0) - points);
+                                    
+                                    // Add credit to new claim
+                                    c[newPerson] = (c[newPerson] ?? 0) + points;
+                                    
+                                    return { ...s, credits: c };
+                                  });
+                                  
+                                  // Mark conflict as resolved
+                                  setConflicts(prev => prev.map(c => 
+                                    c.id === conflict.id ? { ...c, resolved: true } : c
+                                  ));
+                                  
+                                  alert(`Resolved: ${conflict.newClaim} gets credit for ${conflict.action}`);
+                                }}
+                              >
+                                Give to {conflict.newClaim}
+                              </button>
+                              <button 
+                                className="px-2 py-1 bg-blue-600 text-white rounded text-[10px]"
+                                onClick={() => {
+                                  // Mark conflict as resolved (keep existing claim)
+                                  setConflicts(prev => prev.map(c => 
+                                    c.id === conflict.id ? { ...c, resolved: true } : c
+                                  ));
+                                  alert(`Resolved: ${conflict.existingClaim} keeps credit for ${conflict.action}`);
+                                }}
+                              >
+                                Keep with {conflict.existingClaim}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="space-y-3">
+                      <h4 className="font-medium text-sm">Manual Pause Controls</h4>
+                      <div className="grid grid-cols-2 gap-2">
+                        {roommates.map((name) => (
+                          <div key={name} className="flex items-center gap-2">
+                            <span className="text-xs w-12">{name}:</span>
+                            <button 
+                              className={`px-2 py-1 rounded text-[10px] ${paused[name] ? 'bg-green-600 text-white' : 'bg-gray-300 text-gray-700'}`}
+                              onClick={() => {
+                                setState((s) => {
+                                  const p = { ...s.paused, [name]: !s.paused[name] };
+                                  return { ...s, paused: p };
+                                });
+                              }}
+                            >
+                              {paused[name] ? 'Unpause' : 'Pause'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <h4 className="font-medium text-sm">Admin Actions (Enter for Others)</h4>
+                      <div className="grid grid-cols-2 gap-3">
+                        {roommates.map((name) => (
+                          <div key={name} className="border rounded-lg p-2">
+                            <div className="text-xs font-medium mb-2">{name}</div>
+                            <div className="grid grid-cols-3 gap-1 text-[10px]">
+                              <button 
+                                className="px-1 py-1 bg-blue-100 rounded"
+                                onClick={() => {
+                                  if (checkForConflicts('3pm', 'run', name)) {
+                                    alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they ran the 3 PM load.\n\nThis conflict has been logged for admin review.`);
+                                    return;
+                                  }
+                                  completeLoad('3pm', { runBy: name, unloadBy: name, advance: true });
+                                }}
+                              >
+                                3PM Run
+                              </button>
+                              <button 
+                                className="px-1 py-1 bg-green-100 rounded"
+                                onClick={() => {
+                                  if (checkForConflicts('3pm', 'unload', name)) {
+                                    alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they unloaded the 3 PM load.\n\nThis conflict has been logged for admin review.`);
+                                    return;
+                                  }
+                                  const runner = current3pm || name;
+                                  completeLoad('3pm', { runBy: runner, unloadBy: name, advance: true });
+                                }}
+                              >
+                                3PM Unload
+                              </button>
+                              <button 
+                                className="px-1 py-1 bg-purple-100 rounded"
+                                onClick={() => {
+                                  if (checkForConflicts('3pm', 'run', name) || checkForConflicts('3pm', 'unload', name)) {
+                                    alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they did the 3 PM load.\n\nThis conflict has been logged for admin review.`);
+                                    return;
+                                  }
+                                  completeLoad('3pm', { runBy: name, unloadBy: name, advance: true });
+                                }}
+                              >
+                                3PM Both
+                              </button>
+                              <button 
+                                className="px-1 py-1 bg-blue-100 rounded"
+                                onClick={() => {
+                                  if (checkForConflicts('night', 'run', name)) {
+                                    alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they ran the Night load.\n\nThis conflict has been logged for admin review.`);
+                                    return;
+                                  }
+                                  completeLoad('night', { runBy: name, unloadBy: name, advance: true });
+                                }}
+                              >
+                                Night Run
+                              </button>
+                              <button 
+                                className="px-1 py-1 bg-green-100 rounded"
+                                onClick={() => {
+                                  if (checkForConflicts('night', 'unload', name)) {
+                                    alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they unloaded the Night load.\n\nThis conflict has been logged for admin review.`);
+                                    return;
+                                  }
+                                  const runner = currentNight || name;
+                                  completeLoad('night', { runBy: runner, unloadBy: name, advance: true });
+                                }}
+                              >
+                                Night Unload
+                              </button>
+                              <button 
+                                className="px-1 py-1 bg-purple-100 rounded"
+                                onClick={() => {
+                                  if (checkForConflicts('night', 'run', name) || checkForConflicts('night', 'unload', name)) {
+                                    alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they did the Night load.\n\nThis conflict has been logged for admin review.`);
+                                    return;
+                                  }
+                                  completeLoad('night', { runBy: name, unloadBy: name, advance: true });
+                                }}
+                              >
+                                Night Both
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <h4 className="font-medium text-sm">Optional Chores (Enter for Others)</h4>
+                      <div className="grid grid-cols-2 gap-3">
+                        {roommates.map((name) => (
+                          <div key={name} className="border rounded-lg p-2">
+                            <div className="text-xs font-medium mb-2">{name}</div>
+                            <div className="grid grid-cols-2 gap-1 text-[10px]">
+                              {Object.keys(optionalChores).map((choreName) => (
+                                <button 
+                                  key={choreName}
+                                  className="px-1 py-1 bg-blue-100 rounded"
+                                  onClick={() => {
+                                    if (checkForConflicts(choreName, 'complete', name)) {
+                                      alert(`⚠️ CONFLICT DETECTED!\n\nSomeone else already claimed they completed ${choreName}.\n\nThis conflict has been logged for admin review.`);
+                                      return;
+                                    }
+                                    claimOptionalChore(choreName, name);
+                                  }}
+                                >
+                                  {choreName}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <h4 className="font-medium text-sm">PIN Management</h4>
+                      {roommates.map((name) => (
+                        <div key={name} className="flex items-center gap-2">
+                          <span className="text-xs w-12">{name}:</span>
+                          <input
+                            type="password"
+                            className="flex-1 rounded border px-2 py-1 text-xs"
+                            placeholder="New PIN (4-8 digits)"
+                                                         onKeyPress={(e) => {
+                               if (e.key === 'Enter') {
+                                 const newPin = e.target.value.trim();
+                                 if (newPin && /^[0-9]{4,8}$/.test(newPin)) {
+                                   // Check if PIN is the same as current
+                                   if (newPin === pins[name]) {
+                                     alert(`New PIN cannot be the same as ${name}'s current PIN. Please choose a different PIN.`);
+                                     e.target.value = "";
+                                     return;
+                                   }
+                                   
+                                   // Check if another roommate has this PIN
+                                   const existingUser = roommates.find(roommate => roommate !== name && pins[roommate] === newPin);
+                                   if (existingUser) {
+                                     alert(`PIN ${newPin} is already in use. Please choose a different PIN.`);
+                                     e.target.value = "";
+                                     return;
+                                   }
+                                   
+                                   const confirmPin = prompt(`Confirm new PIN for ${name} (4-8 digits):`);
+                                   if (confirmPin === newPin) {
+                                     setState((s) => ({ 
+                                       ...s, 
+                                       pins: { ...s.pins, [name]: newPin } 
+                                     }));
+                                     e.target.value = "";
+                                     alert(`${name}'s PIN has been updated to ${newPin}`);
+                                   } else if (confirmPin !== null) {
+                                     alert("PINs don't match. PIN change cancelled.");
+                                     e.target.value = "";
+                                   }
+                                 } else {
+                                   alert("PIN must be 4-8 digits.");
+                                   e.target.value = "";
+                                 }
+                               }
+                             }}
+                          />
+                          <button 
+                            className="px-2 py-1 bg-blue-600 text-white rounded text-xs"
+                            onClick={() => {
+                              const newPin = prompt(`Enter new PIN for ${name} (4-8 digits):`);
+                              if (newPin && /^[0-9]{4,8}$/.test(newPin)) {
+                                // Check if PIN is the same as current
+                                if (newPin === pins[name]) {
+                                  alert(`New PIN cannot be the same as ${name}'s current PIN. Please choose a different PIN.`);
+                                  return;
+                                }
+                                
+                                // Check if another roommate has this PIN
+                                const existingUser = roommates.find(roommate => roommate !== name && pins[roommate] === newPin);
+                                if (existingUser) {
+                                  alert(`PIN ${newPin} is already in use. Please choose a different PIN.`);
+                                  return;
+                                }
+                                
+                                const confirmPin = prompt(`Confirm new PIN for ${name} (4-8 digits):`);
+                                if (confirmPin === newPin) {
+                                  setState((s) => ({ 
+                                    ...s, 
+                                    pins: { ...s.pins, [name]: newPin } 
+                                  }));
+                                  alert(`${name}'s PIN has been updated to ${newPin}`);
+                                } else if (confirmPin !== null) {
+                                  alert("PINs don't match. PIN change cancelled.");
+                                }
+                              } else if (newPin !== null) {
+                                alert("PIN must be 4-8 digits.");
+                              }
+                            }}
+                          >
+                            Set
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <button 
+                          className="px-3 py-2 bg-red-600 text-white rounded-lg text-sm"
+                          onClick={() => {
+                            if (confirm("Reset all credits to 0?")) {
+                              setState((s) => ({ ...s, credits: Object.fromEntries(Object.keys(s.credits).map((k) => [k, 0])) }));
+                              setShowAdminPanel(false);
+                            }
+                          }}
+                        >
+                          Reset Credits
+                        </button>
+                        <button 
+                          className="px-3 py-2 bg-orange-600 text-white rounded-lg text-sm"
+                          onClick={() => {
+                            if (confirm("Clear all history? This will remove all past actions but keep current credits and queues.")) {
+                              setState((s) => ({ ...s, history: [] }));
+                              setShowAdminPanel(false);
+                            }
+                          }}
+                        >
+                          Reset History
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button 
+                          className="px-3 py-2 bg-yellow-600 text-white rounded-lg text-sm"
+                          onClick={() => {
+                            if (confirm("Reset queues to default order? This will put everyone back to their original positions.")) {
+                              setState((s) => ({ 
+                                ...s, 
+                                queue3pm: defaultState.queue3pm,
+                                queueNight: defaultState.queueNight 
+                              }));
+                              setShowAdminPanel(false);
+                            }
+                          }}
+                        >
+                          Reset Queues
+                        </button>
+                        <button 
+                          className="px-3 py-2 bg-red-800 text-white rounded-lg text-sm"
+                          onClick={() => {
+                            const adminPin = prompt("Enter admin PIN to reset everything:");
+                            if (adminPin === "2024") {
+                              if (confirm("Reset everything? This will clear all data and reset PINs to default.")) {
+                                localStorage.removeItem(STORAGE_KEY);
+                                window.location.reload();
+                              }
+                            } else if (adminPin !== null) {
+                              alert("Incorrect admin PIN. Reset cancelled.");
+                            }
+                          }}
+                        >
+                          Reset Everything
+                        </button>
+                      </div>
+                    </div>
+                    <button 
+                      className="w-full px-4 py-2 bg-gray-300 rounded-lg"
+                      onClick={() => {
+                        setShowAdminPanel(false);
+                      }}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       );

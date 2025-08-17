@@ -1,18 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
-
-// Simple, shareable single-file React app for managing dishwasher loads
-// NEW: Per-roommate numeric PINs required to claim "I ran" / "I unloaded" actions.
-// Features
-// - Rotation by LOAD (not day) with a visible queue
-// - Two daily anchor windows: 3 PM Load, Night Load (9–11 PM)
-// - Brunch Buffer (11:00–14:00) reminder to avoid running mid-brunch
-// - Flex Rule: anyone can run/unload for someone else; credits go to who actually did it
-// - Credits: 0.5 credit for a run, 0.5 credit for an unload (fair split)
-// - Pause/Skip a roommate temporarily
-// - Local storage persistence
-// - NEW: PIN management UI + PIN verification on run/unload
-//
-// Deploy ideas: drop this into a Vite/Next.js project and host on Netlify/Vercel/GitHub Pages.
+const { useState, useEffect, useMemo } = React;
 
 const STORAGE_KEY = "dishwasher_app_state_v2_pins";
 
@@ -34,8 +20,8 @@ function useLocalStorageState(defaultValue) {
 }
 
 const defaultState = {
-  roommates: ["A", "B", "C", "D"],
-  queue: ["A", "B", "C", "D"], // rotation by load
+  roommates: ["Khushi", "Kavya", "Himani", "Avani"],
+  queue: ["Khushi", "Kavya", "Himani", "Avani"], // rotation by load
   paused: {}, // { name: true }
   credits: {}, // { name: number }
   history: [], // { id, when, kind: '3pm'|'night', runBy, unloadBy, runCredit, unloadCredit }
@@ -60,7 +46,7 @@ function Section({ title, children, extra }) {
   );
 }
 
-export default function DishwasherApp() {
+function DishwasherApp() {
   const [state, setState] = useLocalStorageState(defaultState);
   const { roommates, queue, paused, credits, history, pins } = state;
 
@@ -144,7 +130,7 @@ export default function DishwasherApp() {
     if (entered === expected) return true;
     alert("Incorrect PIN.");
     return false;
-    }
+  }
 
   function addCredits({ runBy, unloadBy, kind }) {
     setState((s) => {
@@ -173,9 +159,7 @@ export default function DishwasherApp() {
     // Ask who ran / unloaded (Flex Rule), then verify PINs for those names
     const defaultName = current ?? roommates[0] ?? "";
     const runBy = prompt(
-      `${kind === "3pm" ? "3 PM" : "Night"} LOAD
-Who RAN it? (default: ${defaultName})
-Type a name exactly or leave blank`
+      `${kind === "3pm" ? "3 PM" : "Night"} LOAD\nWho RAN it? (default: ${defaultName})\nType a name exactly or leave blank`
     )?.trim() || defaultName;
 
     if (!runBy) return alert("Please set roommates first.");
@@ -183,9 +167,7 @@ Type a name exactly or leave blank`
 
     const unloadBy = (
       prompt(
-        `${kind === "3pm" ? "3 PM" : "Night"} LOAD
-Who UNLOADED it? (default: ${runBy})
-Type a name exactly or leave blank`
+        `${kind === "3pm" ? "3 PM" : "Night"} LOAD\nWho UNLOADED it? (default: ${runBy})\nType a name exactly or leave blank`
       )?.trim() || runBy
     );
 
@@ -225,7 +207,7 @@ Type a name exactly or leave blank`
             <li>Hand-wash lane: big pots/pans, knives, wooden tools, non-safe plastics.</li>
             <li>Rotation is by <b>load</b>. Flex Rule: you can run/unload for someone else; credits go to who actually did it.</li>
             <li>Night load must be <b>run & unloaded before bed</b> so mornings start empty.</li>
-            <li>Don’t run during Brunch Buffer (11–14). Aim for a 15:00 load, and a 21:00–23:00 load.</li>
+            <li>Don't run during Brunch Buffer (11–14). Aim for a 15:00 load, and a 21:00–23:00 load.</li>
             <li><b>PINs:</b> Each roommate sets a numeric PIN (4–8 digits). You must enter your PIN to claim "I ran" or "I unloaded".</li>
           </ul>
         </Section>
@@ -303,15 +285,15 @@ Type a name exactly or leave blank`
           <div className="grid md:grid-cols-2 gap-4">
             <div className="rounded-2xl border p-4 space-y-3">
               <div className="flex items-center justify-between"><h3 className="font-semibold">3 PM Load</h3><Label>Run after 14:00</Label></div>
-              <p className="text-sm text-gray-600">Default runner: <b>{current ?? "—"}</b>{next?` • Next: ${next}`:""}</p>
+              <p className="text-sm text-gray-600">Default runner: <b>{current ?? "—"}</b>{next ? ` • Next: ${next}` : ""}</p>
               <div className="flex gap-2">
                 <button className="px-3 py-2 rounded-xl bg-black text-white" onClick={() => handleComplete("3pm")}>Record 3 PM (choose runners)</button>
               </div>
-              <p className="text-xs text-gray-500">Flex Rule: If you filled it or someone texted they can’t make it, you may run/unload on their behalf. Credits split to the actual people (PINs required).</p>
+              <p className="text-xs text-gray-500">Flex Rule: If you filled it or someone texted they can't make it, you may run/unload on their behalf. Credits split to the actual people (PINs required).</p>
             </div>
             <div className="rounded-2xl border p-4 space-y-3">
               <div className="flex items-center justify-between"><h3 className="font-semibold">Night Load</h3><Label>21:00–23:00 • Unload before bed</Label></div>
-              <p className="text-sm text-gray-600">Default runner: <b>{current ?? "—"}</b>{next?` • Next: ${next}`:""}</p>
+              <p className="text-sm text-gray-600">Default runner: <b>{current ?? "—"}</b>{next ? ` • Next: ${next}` : ""}</p>
               <div className="flex gap-2">
                 <button className="px-3 py-2 rounded-xl bg-black text-white" onClick={() => handleComplete("night")}>Record Night (choose runners)</button>
               </div>
@@ -359,9 +341,12 @@ Type a name exactly or leave blank`
         </Section>
 
         <footer className="text-xs text-gray-500 text-center pb-6">
-          Tip: Host on Netlify/Vercel/GitHub Pages. Data (including PINs) is saved <b>locally on this device</b>. For cross-device sync, wire up Supabase/Firebase.
+          Tip: You can host this file as-is on Netlify/Vercel/GitHub Pages. Data (including PINs) is saved <b>locally on this device</b>. For cross-device sync, wire up Supabase/Firebase.
         </footer>
       </div>
     </div>
   );
 }
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<DishwasherApp />);
