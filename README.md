@@ -2,6 +2,7 @@
 # Dishwasher Rotation • By Load (PIN Enabled)
 
 Single-file web app to manage roommate dishwasher rotations. Ready for **Vercel**.
+Vercel link (link to site): https://roommate-chores-blue.vercel.app/
 
 ## Files
 - `index.html` — the entire app (React via CDN, Tailwind via CDN, Babel for JSX)
