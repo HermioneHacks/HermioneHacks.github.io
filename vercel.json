@@ -11,5 +11,10 @@
       "src": "/(.*)",
       "dest": "/index.html"
     }
-  ]
+  ],
+  "functions": {
+    "api/config.js": {
+      "runtime": "nodejs18.x"
+    }
+  }
 }

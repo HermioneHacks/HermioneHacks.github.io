@@ -92,18 +92,8 @@
   <!-- Firebase (Firestore) -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-  <script>
-    // Firebase config provided by you
-    window.FIREBASE_CONFIG = {
-      apiKey: "AIzaSyDEXaVbhG-3se2jB3tAjacA7NBGKhm9Bkk",
-      authDomain: "roommatechores-55c53.firebaseapp.com",
-      projectId: "roommatechores-55c53",
-      storageBucket: "roommatechores-55c53.firebasestorage.app",
-      messagingSenderId: "153553124462",
-      appId: "1:153553124462:web:4beea3dda1ececbb08fa7f",
-      measurementId: "G-KP7M9B4ETZ"
-    };
-  </script>
+  <!-- Firebase config is served from a serverless function so it isn't committed to git -->
+  <script src="/api/config.js"></script>
   <!-- Vercel Analytics (vanilla) -->
   <script defer src="https://va.vercel-scripts.com/v1/script.debug.js"></script>
 </head>
@@ -290,6 +280,24 @@
         }
       }, [firebaseApp]);
       const lastWriteRef = React.useRef({ json: null });
+
+      function computeContentJson(src) {
+        try {
+          const content = {
+            roommates: src.roommates,
+            queue3pm: src.queue3pm,
+            queueNight: src.queueNight,
+            optionalChores: src.optionalChores,
+            paused: src.paused,
+            credits: src.credits,
+            history: src.history,
+            bathrooms: src.bathrooms,
+          };
+          return JSON.stringify(content);
+        } catch {
+          return null;
+        }
+      }
 
       // Auto-join household via URL param (?house=ID | ?household=ID | ?h=ID)
       useEffect(() => {
@@ -515,19 +523,11 @@
             history: Array.isArray(data.history) ? data.history : history,
             bathrooms: data.bathrooms || bathrooms,
           };
-          const currentJson = JSON.stringify({
-            roommates: merged.roommates,
-            queue3pm: merged.queue3pm,
-            queueNight: merged.queueNight,
-            optionalChores: merged.optionalChores,
-            paused: merged.paused,
-            credits: merged.credits,
-            history: merged.history,
-            bathrooms: merged.bathrooms,
-          });
-          if (lastWriteRef.current.json !== currentJson) {
-            setState((s) => ({ ...s, ...merged }));
-          }
+          const contentJson = computeContentJson(merged);
+          if (lastWriteRef.current.json === contentJson) return;
+          // Mark as current so the subsequent write effect does not echo back
+          lastWriteRef.current.json = contentJson;
+          setState((s) => ({ ...s, ...merged }));
         });
         return () => unsub();
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -547,9 +547,9 @@
           bathrooms,
           updatedAt: Date.now(),
         };
-        const json = JSON.stringify(payload);
-        if (lastWriteRef.current.json === json) return;
-        lastWriteRef.current.json = json;
+        const contentJson = computeContentJson(payload);
+        if (lastWriteRef.current.json === contentJson) return;
+        lastWriteRef.current.json = contentJson;
         db.collection('households').doc(householdId).set(payload, { merge: true }).catch(() => {});
       }, [db, cloudEnabled, householdId, roommates, queue3pm, queueNight, optionalChores, paused, credits, history, bathrooms]);
 
@@ -1505,30 +1505,34 @@
                   <p><b>Note:</b> If it's solely your own mess, you are very much responsible for cleaning it up yourself.</p>
                   <p>These are extra tasks you can claim for points. No rotation - first come, first served!</p>
                   </div>
-                {!isGuest && (
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                    {Object.keys(optionalChores).map((choreName) => (
-                      <button 
-                        key={choreName}
-                        className={`p-3 rounded-lg border text-left ${paused[currentUser] ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white hover:bg-gray-50'}`}
-                        onClick={() => !paused[currentUser] && handleClaimChore(choreName)}
-                        disabled={paused[currentUser]}
-                      >
-                        <div className="font-medium text-sm">{choreName}</div>
-                        <div className="text-xs text-gray-500 mt-1">{optionalChores[choreName].description}</div>
-                        <div className="text-xs font-semibold text-blue-600 mt-1">
-                          {paused[currentUser] ? 'PAUSED' : `+${optionalChores[choreName].points} points`}
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {Object.keys(optionalChores).sort((a,b)=>a.localeCompare(b)).map((choreName) => (
+                    <div 
+                      key={choreName}
+                      className={`p-3 rounded-lg border text-left ${isGuest ? 'bg-white' : (paused[currentUser] ? 'bg-gray-100 text-gray-400' : 'bg-white hover:bg-gray-50')}`}
+                    >
+                      <div className="font-medium text-sm">{choreName}</div>
+                      <div className="text-xs text-gray-500 mt-1">{optionalChores[choreName].description}</div>
+                      <div className="text-xs font-semibold text-blue-600 mt-1">
+                        +{optionalChores[choreName].points} points
+                      </div>
+                      {!isGuest && (
+                        <div className="mt-2">
+                          <button
+                            className={`w-full px-2 py-1 rounded border text-xs ${paused[currentUser] ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white hover:bg-gray-50'}`}
+                            onClick={() => !paused[currentUser] && handleClaimChore(choreName)}
+                            disabled={paused[currentUser]}
+                          >
+                            {paused[currentUser] ? 'PAUSED' : 'Claim'}
+                          </button>
                         </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {isGuest && (
-                  <div className="text-center text-gray-500 py-8">
-                    <p>Guest Mode - View Only</p>
-                    <p className="text-sm mt-2">Log in to claim optional chores for points</p>
-                  </div>
-                )}
+                      )}
+                      {isGuest && (
+                        <div className="mt-2 text-[10px] text-gray-500">Login to claim</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             </Section>
 
@@ -1540,7 +1544,8 @@
                 </div>
                 
                 <div className="grid md:grid-cols-2 gap-4">
-                  {Object.entries(bathrooms).map(([bathroomName, bathroom]) => {
+                  {Object.keys(bathrooms).sort((a,b)=>a.localeCompare(b)).map((bathroomName) => {
+                    const bathroom = bathrooms[bathroomName];
                     const canSee = !isGuest && canSeeBathroom(currentUser, bathroomName);
                     const isResponsible = bathroom.currentResponsible === currentUser;
                     const lastCleanedDate = bathroom.lastCleaned ? new Date(bathroom.lastCleaned) : null;
@@ -2494,8 +2499,12 @@
                             const adminPin = prompt("Enter admin PIN to reset everything:");
                             if (adminPin === "2024") {
                               if (confirm("Reset everything? This will clear all data and reset PINs to default.")) {
-                                localStorage.removeItem(STORAGE_KEY);
-                                window.location.reload();
+                                const finish = () => { localStorage.removeItem(STORAGE_KEY); window.location.reload(); };
+                                if (cloudEnabled && db && householdId && confirm("Also clear shared cloud data for this household?")) {
+                                  db.collection('households').doc(householdId).delete().finally(finish);
+                                } else {
+                                  finish();
+                                }
                               }
                             } else if (adminPin !== null) {
                               alert("Incorrect admin PIN. Reset cancelled.");
