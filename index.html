@@ -89,6 +89,21 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <!-- Babel for JSX (development convenience). For production, consider prebuilding. -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Firebase (Firestore) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script>
+    // Firebase config provided by you
+    window.FIREBASE_CONFIG = {
+      apiKey: "AIzaSyDEXaVbhG-3se2jB3tAjacA7NBGKhm9Bkk",
+      authDomain: "roommatechores-55c53.firebaseapp.com",
+      projectId: "roommatechores-55c53",
+      storageBucket: "roommatechores-55c53.firebasestorage.app",
+      messagingSenderId: "153553124462",
+      appId: "1:153553124462:web:4beea3dda1ececbb08fa7f",
+      measurementId: "G-KP7M9B4ETZ"
+    };
+  </script>
 </head>
 <body class="bg-gray-50">
   <div id="root"></div>
@@ -97,6 +112,15 @@
     const { useState, useEffect, useMemo } = React;
 
     const STORAGE_KEY = "roommate_chores_app_v2_with_optional";
+    // Replace with your Firebase config or define window.FIREBASE_CONFIG in a separate script before this file
+    const FIREBASE_CONFIG = window.FIREBASE_CONFIG || {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+    };
+    function isFirebaseConfigured(cfg) {
+      return cfg && cfg.apiKey && cfg.authDomain && cfg.projectId && !cfg.apiKey.startsWith("YOUR_");
+    }
 
     function useLocalStorageState(defaultValue) {
       const [state, setState] = useState(() => {
@@ -133,6 +157,10 @@
       roommates: ["Khushi", "Kavya", "Himani", "Avani"],
       queue3pm: ["Khushi", "Kavya", "Himani", "Avani"], // Forward rotation
       queueNight: ["Avani", "Himani", "Kavya", "Khushi"], // Backward rotation
+      
+      // Cloud sync
+      householdId: "roommates-apt-2025",
+      cloudEnabled: false,
       optionalChores: {
         "Cleaned Microwave": {
           points: 0.5,
@@ -238,11 +266,55 @@
       const [selectedCollaborators, setSelectedCollaborators] = useState([]);
       const [pendingOtherChores, setPendingOtherChores] = useState([]);
 
+      // Firebase init (compat)
+      const firebaseApp = useMemo(() => {
+        try {
+          if (!isFirebaseConfigured(FIREBASE_CONFIG)) return null;
+          // Guard for firebase globals not present
+          if (typeof firebase === 'undefined') return null;
+          return firebase.apps && firebase.apps.length
+            ? firebase.app()
+            : firebase.initializeApp(FIREBASE_CONFIG);
+        } catch (e) {
+          console.warn('Firebase init failed:', e);
+          return null;
+        }
+      }, []);
+      const db = useMemo(() => {
+        try {
+          return firebaseApp ? firebase.firestore() : null;
+        } catch {
+          return null;
+        }
+      }, [firebaseApp]);
+      const lastWriteRef = React.useRef({ json: null });
+
+      // Auto-join household via URL param (?house=ID | ?household=ID | ?h=ID)
+      useEffect(() => {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const fromUrl = params.get('house') || params.get('household') || params.get('h');
+          if (fromUrl && fromUrl.trim() && !householdId) {
+            const id = fromUrl.trim();
+            setState((s) => ({ ...s, householdId: id, cloudEnabled: true }));
+          }
+        } catch {}
+      }, [householdId]);
+
+      // If config is present and we already have a householdId but cloud is off, auto-enable (first run convenience)
+      useEffect(() => {
+        if (isFirebaseConfigured(FIREBASE_CONFIG) && householdId && !cloudEnabled) {
+          setState((s) => ({ ...s, cloudEnabled: true }));
+        }
+      }, [householdId, cloudEnabled]);
+
       // Function to check for roommate call-outs
       function getRoommateCallouts() {
         const callouts = [];
         const now = new Date();
         const cstNow = new Date(now.toLocaleString("en-US", {timeZone: "America/Chicago"}));
+        // If there's no history, don't show callouts
+        if (!history || history.length === 0) return [];
         
         // Check for roommates who haven't done their responsible shift by the next shift
         const recentHistory = history.filter(h => {
@@ -395,9 +467,7 @@
         bathrooms: state.bathrooms || defaultState.bathrooms,
       };
 
-
-      
-      const { roommates, queue3pm, queueNight, optionalChores, bathrooms, paused, credits, history, pins } = safeState;
+      const { roommates, queue3pm, queueNight, optionalChores, bathrooms, paused, credits, history, pins, householdId, cloudEnabled } = safeState;
 
       const activeQueue3pm = useMemo(
         () => queue3pm.filter((n) => !paused[n]),
@@ -423,6 +493,93 @@
           setState((s) => ({ ...s, credits: updatedCredits, pins: updatedPins }));
         }
       }, [roommates]);
+
+      // Cloud read: subscribe to Firestore document for this household
+      useEffect(() => {
+        if (!db || !cloudEnabled || !householdId) return;
+        const docRef = db.collection('households').doc(householdId);
+        const unsub = docRef.onSnapshot((snap) => {
+          const data = snap.data();
+          if (!data) return;
+          // Exclude PINs from remote
+          const merged = {
+            ...state,
+            roommates: data.roommates || roommates,
+            queue3pm: data.queue3pm || queue3pm,
+            queueNight: data.queueNight || queueNight,
+            optionalChores: data.optionalChores || optionalChores,
+            paused: data.paused || paused,
+            credits: data.credits || credits,
+            history: Array.isArray(data.history) ? data.history : history,
+            bathrooms: data.bathrooms || bathrooms,
+          };
+          const currentJson = JSON.stringify({
+            roommates: merged.roommates,
+            queue3pm: merged.queue3pm,
+            queueNight: merged.queueNight,
+            optionalChores: merged.optionalChores,
+            paused: merged.paused,
+            credits: merged.credits,
+            history: merged.history,
+            bathrooms: merged.bathrooms,
+          });
+          if (lastWriteRef.current.json !== currentJson) {
+            setState((s) => ({ ...s, ...merged }));
+          }
+        });
+        return () => unsub();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [db, cloudEnabled, householdId]);
+
+      // Cloud write: push updates when local changes
+      useEffect(() => {
+        if (!db || !cloudEnabled || !householdId) return;
+        const payload = {
+          roommates,
+          queue3pm,
+          queueNight,
+          optionalChores,
+          paused,
+          credits,
+          history,
+          bathrooms,
+          updatedAt: Date.now(),
+        };
+        const json = JSON.stringify(payload);
+        if (lastWriteRef.current.json === json) return;
+        lastWriteRef.current.json = json;
+        db.collection('households').doc(householdId).set(payload, { merge: true }).catch(() => {});
+      }, [db, cloudEnabled, householdId, roommates, queue3pm, queueNight, optionalChores, paused, credits, history, bathrooms]);
+
+      function configureHousehold() {
+        if (!isFirebaseConfigured(FIREBASE_CONFIG)) {
+          alert('Cloud sync not configured. Add your Firebase config in index.html or define window.FIREBASE_CONFIG.');
+          return;
+        }
+        const id = prompt('Enter Household ID (letters, numbers, dashes):', householdId || '');
+        if (id === null) return;
+        const trimmed = id.trim();
+        const enable = trimmed ? confirm('Enable cloud sync for this device?') : false;
+        // Only admin (Himani) can disable cloud once enabled or remove household
+        const isDisabling = cloudEnabled && (!enable || !trimmed);
+        if (isDisabling && currentUser !== 'Himani') {
+          alert('Only the admin (Himani) can disable cloud sync.');
+          return;
+        }
+        // Apply changes
+        setState((s) => ({ ...s, householdId: trimmed, cloudEnabled: trimmed ? enable : false }));
+      }
+      function clearCloudHouseholdData() {
+        if (!db || !householdId) {
+          alert('Cloud sync not active.');
+          return;
+        }
+        if (confirm(`Delete cloud data for "${householdId}"? This will not delete local data.`)) {
+          db.collection('households').doc(householdId).delete().then(() => {
+            alert('Cloud household cleared.');
+          }).catch(() => {});
+        }
+      }
 
       const current3pm = activeQueue3pm[0] || null;
       const next3pm = activeQueue3pm[1] || null;
@@ -1059,6 +1216,19 @@
                 <p className="text-xs text-gray-500">
                   Today is: {getCurrentDateTime().dateString} • {getCurrentDateTime().greeting} • {getCurrentDateTime().timeString} CST
                 </p>
+                <div className="text-xs text-gray-500">
+                  Cloud: {cloudEnabled ? (
+                    <span className="text-green-600">Enabled</span>
+                  ) : (
+                    <span className="text-gray-600">Disabled</span>
+                  )}
+                  {householdId ? (
+                    <> • Household: <b>{householdId}</b></>
+                  ) : (
+                    <> • No household set</>
+                  )}
+                  <button className="text-blue-600 underline ml-2" onClick={configureHousehold}>Change</button>
+                </div>
                 {!isGuest && (
                   <button 
                     className="text-xs text-blue-600 underline mt-1"
@@ -1097,7 +1267,20 @@
                   </button>
                 )}
               </div>
-              <Label>Chore Rotation • PINs enabled • Fair distribution</Label>
+              <div className="flex items-center gap-2">
+                <Label>Chore Rotation • PINs enabled • Fair distribution</Label>
+                {householdId && currentUser === 'Himani' && (
+                  <button
+                    className="text-xs text-blue-600 underline"
+                    onClick={() => {
+                      const url = `${window.location.origin}${window.location.pathname}?house=${encodeURIComponent(householdId)}`;
+                      navigator.clipboard.writeText(url).then(() => alert('Invite link copied!')).catch(() => prompt('Copy this link:', url));
+                    }}
+                  >
+                    Copy invite link
+                  </button>
+                )}
+              </div>
             </header>
 
             {/* Roommate Call-outs Section */}
@@ -1602,7 +1785,6 @@
             </Section>
 
             <footer className="text-xs text-gray-500 text-center pb-6">
-              <div className="mb-2">Tip: You can host this file as-is on Netlify/Vercel/GitHub Pages. Data (including PINs) is saved <b>locally on this device</b>.</div>
               <div className="text-red-600 font-semibold">⚠️ ADMIN ACCESS: Only Himani can pause roommates, set PINs, or reset data. Others can only record their own chore completions.</div>
 
             </footer>
@@ -2275,6 +2457,7 @@
                               setState((s) => ({ ...s, history: [] }));
                               setConflicts([]); // Also clear conflicts since they're based on history
                               setShowAdminPanel(false);
+                              alert("History reset.");
                             }
                           }}
                         >
@@ -2313,6 +2496,14 @@
                         >
                           Reset Everything
                         </button>
+                        {currentUser === 'Himani' && (
+                        <button 
+                          className="px-3 py-2 bg-purple-700 text-white rounded-lg text-sm"
+                          onClick={() => clearCloudHouseholdData()}
+                        >
+                          Clear Cloud Household
+                        </button>
+                        )}
                         <button 
                           className="px-3 py-2 bg-purple-600 text-white rounded-lg text-sm"
                           onClick={() => {
