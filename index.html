@@ -300,6 +300,7 @@
             credits: src.credits,
             history: src.history,
             bathrooms: src.bathrooms,
+            calloutsMutedUntil: src.calloutsMutedUntil || null,
           };
           return JSON.stringify(content);
         } catch {
@@ -566,6 +567,7 @@
           credits,
           history,
           bathrooms,
+          calloutsMutedUntil,
           updatedAt: Date.now(),
         };
         const contentJson = computeContentJson(payload);
