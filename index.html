@@ -552,6 +552,10 @@
       }, [db, cloudEnabled, householdId, roommates, queue3pm, queueNight, optionalChores, paused, credits, history, bathrooms]);
 
       function configureHousehold() {
+        if (currentUser !== 'Himani') {
+          alert('Only the admin (Himani) can change household settings.');
+          return;
+        }
         if (!isFirebaseConfigured(FIREBASE_CONFIG)) {
           alert('Cloud sync not configured. Add your Firebase config in index.html or define window.FIREBASE_CONFIG.');
           return;
@@ -1227,7 +1231,9 @@
                   ) : (
                     <> • No household set</>
                   )}
-                  <button className="text-blue-600 underline ml-2" onClick={configureHousehold}>Change</button>
+                  {currentUser === 'Himani' && (
+                    <button className="text-blue-600 underline ml-2" onClick={configureHousehold}>Change</button>
+                  )}
                 </div>
                 {!isGuest && (
                   <button 
