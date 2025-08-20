@@ -94,8 +94,11 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
   <!-- Firebase config is served from a serverless function so it isn't committed to git -->
   <script src="/api/config.js"></script>
-  <!-- Vercel Analytics (vanilla) -->
-  <script defer src="https://va.vercel-scripts.com/v1/script.debug.js"></script>
+  <!-- Vercel Analytics via ESM (no build/token needed) -->
+  <script type="module">
+    import { inject } from 'https://unpkg.com/@vercel/analytics?module';
+    inject();
+  </script>
 </head>
 <body class="bg-gray-50">
   <div id="root"></div>
