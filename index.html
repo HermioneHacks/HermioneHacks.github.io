@@ -133,6 +133,9 @@
             if (!parsed.bathrooms) {
               parsed.bathrooms = defaultState.bathrooms;
             }
+            if (parsed.calloutsMutedUntil === undefined) {
+              parsed.calloutsMutedUntil = null;
+            }
             return parsed;
           }
           return defaultValue;
@@ -156,6 +159,8 @@
       // Cloud sync
       householdId: "roommates-apt-2025",
       cloudEnabled: false,
+      // Callouts control
+      calloutsMutedUntil: null,
       optionalChores: {
         "Cleaned Microwave": {
           points: 0.5,
@@ -326,7 +331,11 @@
         const callouts = [];
         const now = new Date();
         const cstNow = new Date(now.toLocaleString("en-US", {timeZone: "America/Chicago"}));
-        // If there's no history, don't show callouts
+        // Mute window (e.g., right after reset) or empty history
+        if (calloutsMutedUntil) {
+          const muteUntil = new Date(calloutsMutedUntil);
+          if (cstNow < muteUntil) return [];
+        }
         if (!history || history.length === 0) return [];
         
         // Check for roommates who haven't done their responsible shift by the next shift
@@ -414,14 +423,23 @@
         // Check for roommates who haven't done any optional chores in 7 days
         const sevenDaysAgo = new Date(cstNow.getTime() - (7 * 24 * 60 * 60 * 1000));
         
+        const recentOptionalChoresByPerson = new Map();
+        history.forEach(h => {
+          if (!h.kind && new Date(h.when) > sevenDaysAgo) {
+            // count main completer
+            if (h.completedBy) {
+              recentOptionalChoresByPerson.set(h.completedBy, true);
+            }
+            // count collaborators too
+            if (Array.isArray(h.collaborators)) {
+              h.collaborators.forEach(name => recentOptionalChoresByPerson.set(name, true));
+            }
+          }
+        });
         roommates.forEach(roommate => {
-          const recentOptionalChores = history.filter(h => 
-            h.completedBy === roommate && 
-            !h.kind && // Optional chores don't have 'kind'
-            new Date(h.when) > sevenDaysAgo
-          );
+          const hasRecent = recentOptionalChoresByPerson.get(roommate) === true;
           
-          if (recentOptionalChores.length === 0) {
+          if (!hasRecent) {
             callouts.push({
               type: 'no_optional_chores',
               roommate: roommate,
@@ -480,7 +498,7 @@
         bathrooms: state.bathrooms || defaultState.bathrooms,
       };
 
-      const { roommates, queue3pm, queueNight, optionalChores, bathrooms, paused, credits, history, pins, householdId, cloudEnabled } = safeState;
+      const { roommates, queue3pm, queueNight, optionalChores, bathrooms, paused, credits, history, pins, householdId, cloudEnabled, calloutsMutedUntil } = safeState;
 
       const activeQueue3pm = useMemo(
         () => queue3pm.filter((n) => !paused[n]),
@@ -2506,7 +2524,9 @@
                                 if (cloudEnabled && db && householdId && confirm("Also clear shared cloud data for this household?")) {
                                   db.collection('households').doc(householdId).delete().finally(finish);
                                 } else {
-                                  finish();
+                                  // mute callouts for 24h and clear local state before reload
+                                  setState((s)=>({ ...defaultState, calloutsMutedUntil: new Date(Date.now()+36*60*60*1000).toISOString() }));
+                                  setTimeout(finish, 50);
                                 }
                               }
                             } else if (adminPin !== null) {
